@@ -78,7 +78,7 @@ export default function NhapKhoTab() {
 
   function updateItem(idx: number, field: string, value: string | number) {
     const updated = [...formItems];
-    (updated[idx] as Record<string, string | number>)[field] = value;
+    (updated[idx] as unknown as Record<string, string | number>)[field] = value;
     setFormItems(updated);
   }
 

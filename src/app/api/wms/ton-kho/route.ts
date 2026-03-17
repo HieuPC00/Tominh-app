@@ -94,7 +94,7 @@ export async function GET(request: Request) {
     const today = new Date();
     const warningDays = 7; // Alert if expiring within 7 days
 
-    for (const lot of (lots || []) as LotRow[]) {
+    for (const lot of (lots || []) as unknown as LotRow[]) {
       const key = `${lot.kho_id}__${lot.hang_hoa_id}`;
 
       if (!grouped[key]) {
