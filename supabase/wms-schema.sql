@@ -259,6 +259,22 @@ CREATE TABLE huy_hang (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Nhà cung cấp
+CREATE TABLE nha_cung_cap (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ma_ncc VARCHAR(30) NOT NULL UNIQUE,
+  ten_ncc VARCHAR(255) NOT NULL,
+  dia_chi TEXT,
+  ma_so_thue VARCHAR(30),
+  dien_thoai VARCHAR(20),
+  email VARCHAR(100),
+  nguoi_lien_he VARCHAR(100),
+  ghi_chu TEXT,
+  trang_thai trang_thai_chung NOT NULL DEFAULT 'hoat_dong',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- 3. INDEXES
 -- ------------------------------------------------------------
 
@@ -278,6 +294,7 @@ CREATE INDEX idx_bin_location_kho ON bin_location(kho_id);
 CREATE INDEX idx_chuyen_kho_kho_xuat ON chuyen_kho(kho_xuat_id);
 CREATE INDEX idx_chuyen_kho_kho_nhan ON chuyen_kho(kho_nhan_id);
 CREATE INDEX idx_huy_hang_kho ON huy_hang(kho_id);
+CREATE INDEX idx_nha_cung_cap_trang_thai ON nha_cung_cap(trang_thai);
 
 -- 4. RLS
 -- ------------------------------------------------------------
@@ -297,6 +314,7 @@ ALTER TABLE chuyen_kho_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE kiem_ke ENABLE ROW LEVEL SECURITY;
 ALTER TABLE kiem_ke_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE huy_hang ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nha_cung_cap ENABLE ROW LEVEL SECURITY;
 
 -- Admin full access
 CREATE POLICY "Admin full access don_vi_tinh" ON don_vi_tinh FOR ALL USING (is_admin());
@@ -314,6 +332,7 @@ CREATE POLICY "Admin full access chuyen_kho_items" ON chuyen_kho_items FOR ALL U
 CREATE POLICY "Admin full access kiem_ke" ON kiem_ke FOR ALL USING (is_admin());
 CREATE POLICY "Admin full access kiem_ke_items" ON kiem_ke_items FOR ALL USING (is_admin());
 CREATE POLICY "Admin full access huy_hang" ON huy_hang FOR ALL USING (is_admin());
+CREATE POLICY "Admin full access nha_cung_cap" ON nha_cung_cap FOR ALL USING (is_admin());
 
 -- Authenticated users can read reference data
 CREATE POLICY "Auth read don_vi_tinh" ON don_vi_tinh FOR SELECT USING (auth.uid() IS NOT NULL);
@@ -331,6 +350,7 @@ CREATE POLICY "Auth read chuyen_kho_items" ON chuyen_kho_items FOR SELECT USING 
 CREATE POLICY "Auth read kiem_ke" ON kiem_ke FOR SELECT USING (auth.uid() IS NOT NULL);
 CREATE POLICY "Auth read kiem_ke_items" ON kiem_ke_items FOR SELECT USING (auth.uid() IS NOT NULL);
 CREATE POLICY "Auth read huy_hang" ON huy_hang FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY "Auth read nha_cung_cap" ON nha_cung_cap FOR SELECT USING (auth.uid() IS NOT NULL);
 
 -- 5. TRIGGERS: auto-update updated_at
 -- ------------------------------------------------------------
@@ -354,4 +374,7 @@ CREATE TRIGGER set_kiem_ke_updated_at BEFORE UPDATE ON kiem_ke
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE TRIGGER set_huy_hang_updated_at BEFORE UPDATE ON huy_hang
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER set_nha_cung_cap_updated_at BEFORE UPDATE ON nha_cung_cap
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();

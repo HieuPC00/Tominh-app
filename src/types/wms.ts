@@ -207,6 +207,21 @@ export interface KiemKe {
   kho?: KhoHang;
 }
 
+export interface NhaCungCap {
+  id: string;
+  ma_ncc: string;
+  ten_ncc: string;
+  dia_chi: string | null;
+  ma_so_thue: string | null;
+  dien_thoai: string | null;
+  email: string | null;
+  nguoi_lien_he: string | null;
+  ghi_chu: string | null;
+  trang_thai: TrangThaiChung;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface HuyHang {
   id: string;
   ma_phieu: string;
