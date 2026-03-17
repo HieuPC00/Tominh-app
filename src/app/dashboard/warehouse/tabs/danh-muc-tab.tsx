@@ -1,0 +1,461 @@
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
+import type { KhoHang, HangHoa, DonViTinh, PhanLoaiHH } from "@/types/wms";
+
+const subTabs = [
+  { id: "hang-hoa", label: "Hàng hóa" },
+  { id: "kho", label: "Kho hàng" },
+  { id: "don-vi-tinh", label: "Đơn vị tính" },
+  { id: "phan-loai", label: "Phân loại" },
+];
+
+const NHIET_DO_LABEL: Record<string, string> = {
+  thuong: "Thường",
+  mat: "Mát (2-8°C)",
+  lanh: "Lạnh (0-2°C)",
+  dong: "Đông (<-18°C)",
+};
+
+export default function DanhMucTab() {
+  const [activeSubTab, setActiveSubTab] = useState("hang-hoa");
+
+  return (
+    <div className="space-y-4">
+      {/* Sub-tabs */}
+      <div className="flex gap-1 border-b border-gray-200 dark:border-gray-800">
+        {subTabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveSubTab(tab.id)}
+            className={`border-b-2 px-4 py-2 text-sm transition-colors ${
+              activeSubTab === tab.id
+                ? "border-blue-600 font-medium text-blue-600"
+                : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeSubTab === "hang-hoa" && <HangHoaSubTab />}
+      {activeSubTab === "kho" && <KhoSubTab />}
+      {activeSubTab === "don-vi-tinh" && <DonViTinhSubTab />}
+      {activeSubTab === "phan-loai" && <PhanLoaiSubTab />}
+    </div>
+  );
+}
+
+// ==================== HÀNG HÓA ====================
+function HangHoaSubTab() {
+  const [list, setList] = useState<HangHoa[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [dvtList, setDvtList] = useState<DonViTinh[]>([]);
+  const [plList, setPlList] = useState<PhanLoaiHH[]>([]);
+
+  // Form
+  const [fMa, setFMa] = useState("");
+  const [fTen, setFTen] = useState("");
+  const [fDvt, setFDvt] = useState("");
+  const [fPL, setFPL] = useState("");
+  const [fNhietDo, setFNhietDo] = useState("thuong");
+  const [fPPXuat, setFPPXuat] = useState("FIFO");
+  const [fTonMin, setFTonMin] = useState("");
+  const [fTonMax, setFTonMax] = useState("");
+  const [fHSD, setFHSD] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const fetchList = useCallback(async () => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    const res = await fetch(`/api/wms/hang-hoa?${params}`);
+    const data = await res.json();
+    setList(data?.data || (Array.isArray(data) ? data : []));
+    setLoading(false);
+  }, [search]);
+
+  useEffect(() => {
+    fetchList();
+    fetch("/api/wms/don-vi-tinh").then((r) => r.json()).then((d) => Array.isArray(d) && setDvtList(d));
+    fetch("/api/wms/phan-loai").then((r) => r.json()).then((d) => Array.isArray(d) && setPlList(d));
+  }, [fetchList]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+
+    const res = await fetch("/api/wms/hang-hoa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ma_hang_hoa: fMa,
+        ten: fTen,
+        dvt_id: fDvt || null,
+        phan_loai_id: fPL || null,
+        nhiet_do_bao_quan: fNhietDo,
+        phuong_phap_xuat: fPPXuat,
+        ton_toi_thieu: parseFloat(fTonMin) || 0,
+        ton_toi_da: parseFloat(fTonMax) || 0,
+        han_su_dung_ngay: parseInt(fHSD) || null,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      setError(err.error || "Lỗi tạo hàng hóa");
+      setSubmitting(false);
+      return;
+    }
+
+    setShowForm(false);
+    setFMa(""); setFTen(""); setFDvt(""); setFPL("");
+    setSubmitting(false);
+    fetchList();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <input type="text" placeholder="Tìm mã, tên hàng hóa..." value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-60 rounded border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
+        <button onClick={() => setShowForm(!showForm)}
+          className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+          + Thêm hàng hóa
+        </button>
+      </div>
+
+      {showForm && (
+        <form onSubmit={handleSubmit} className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+          {error && <div className="mb-3 rounded bg-red-50 p-2 text-sm text-red-600">{error}</div>}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium">Mã hàng hóa *</label>
+              <input required value={fMa} onChange={(e) => setFMa(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="NL001" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs font-medium">Tên *</label>
+              <input required value={fTen} onChange={(e) => setFTen(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="Cà phê rang xay" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Đơn vị tính</label>
+              <select value={fDvt} onChange={(e) => setFDvt(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900">
+                <option value="">— Chọn —</option>
+                {dvtList.map((d) => <option key={d.id} value={d.id}>{d.ten_dvt}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Phân loại</label>
+              <select value={fPL} onChange={(e) => setFPL(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900">
+                <option value="">— Chọn —</option>
+                {plList.map((p) => <option key={p.id} value={p.id}>{p.ten_phan_loai}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Nhiệt độ BQ</label>
+              <select value={fNhietDo} onChange={(e) => setFNhietDo(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900">
+                {Object.entries(NHIET_DO_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">PP xuất kho</label>
+              <select value={fPPXuat} onChange={(e) => setFPPXuat(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900">
+                <option value="FIFO">FIFO (nhập trước xuất trước)</option>
+                <option value="FEFO">FEFO (hết HSD trước xuất trước)</option>
+                <option value="chi_dinh">Chỉ định lô</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Tồn tối thiểu</label>
+              <input type="number" min="0" value={fTonMin} onChange={(e) => setFTonMin(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Tồn tối đa</label>
+              <input type="number" min="0" value={fTonMax} onChange={(e) => setFTonMax(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">HSD (ngày)</label>
+              <input type="number" min="0" value={fHSD} onChange={(e) => setFHSD(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="VD: 90" />
+            </div>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button type="submit" disabled={submitting}
+              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+              {submitting ? "Đang lưu..." : "Tạo hàng hóa"}
+            </button>
+            <button type="button" onClick={() => setShowForm(false)}
+              className="rounded border border-gray-300 px-4 py-2 text-sm dark:border-gray-700">Hủy</button>
+          </div>
+        </form>
+      )}
+
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+        <table className="w-full text-sm">
+          <thead className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
+            <tr>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Mã</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Tên</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">ĐVT</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Phân loại</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Nhiệt độ</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">PP Xuất</th>
+              <th className="px-4 py-2 text-right font-medium text-gray-500">Tồn</th>
+              <th className="px-4 py-2 text-center font-medium text-gray-500">TT</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+            {loading ? (
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">Đang tải...</td></tr>
+            ) : list.length === 0 ? (
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">Chưa có hàng hóa</td></tr>
+            ) : (
+              list.map((hh) => (
+                <tr key={hh.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
+                  <td className="px-4 py-2 font-mono text-xs">{hh.ma_hang_hoa}</td>
+                  <td className="px-4 py-2">{hh.ten}</td>
+                  <td className="px-4 py-2 text-gray-500">{hh.don_vi_tinh?.ten_dvt || "—"}</td>
+                  <td className="px-4 py-2 text-gray-500">{hh.phan_loai?.ten_phan_loai || "—"}</td>
+                  <td className="px-4 py-2 text-xs">{NHIET_DO_LABEL[hh.nhiet_do_bao_quan] || hh.nhiet_do_bao_quan}</td>
+                  <td className="px-4 py-2 text-xs">{hh.phuong_phap_xuat}</td>
+                  <td className="px-4 py-2 text-right">{Number(hh.so_luong_ton).toLocaleString("vi-VN")}</td>
+                  <td className="px-4 py-2 text-center">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      hh.trang_thai === "hoat_dong" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
+                    }`}>{hh.trang_thai === "hoat_dong" ? "HĐ" : hh.trang_thai}</span>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ==================== KHO HÀNG ====================
+function KhoSubTab() {
+  const [list, setList] = useState<KhoHang[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [fMa, setFMa] = useState("");
+  const [fTen, setFTen] = useState("");
+  const [fLoai, setFLoai] = useState("cua_hang");
+  const [fDiaChi, setFDiaChi] = useState("");
+  const [fSDT, setFSDT] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const fetchList = useCallback(async () => {
+    setLoading(true);
+    const res = await fetch("/api/wms/kho");
+    const data = await res.json();
+    setList(Array.isArray(data) ? data : []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchList(); }, [fetchList]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setSubmitting(true);
+    const res = await fetch("/api/wms/kho", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ma_kho: fMa, ten_kho: fTen, loai_kho: fLoai, dia_chi: fDiaChi, dien_thoai: fSDT }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      setError(err.error || "Lỗi");
+      setSubmitting(false);
+      return;
+    }
+    setShowForm(false);
+    setFMa(""); setFTen(""); setFDiaChi(""); setFSDT("");
+    setSubmitting(false);
+    fetchList();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <button onClick={() => setShowForm(!showForm)}
+          className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">+ Thêm kho</button>
+      </div>
+      {showForm && (
+        <form onSubmit={handleSubmit} className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+          {error && <div className="mb-3 rounded bg-red-50 p-2 text-sm text-red-600">{error}</div>}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium">Mã kho *</label>
+              <input required value={fMa} onChange={(e) => setFMa(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="KHO-CH01" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Tên kho *</label>
+              <input required value={fTen} onChange={(e) => setFTen(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" placeholder="Kho Cửa hàng 01" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">Loại kho</label>
+              <select value={fLoai} onChange={(e) => setFLoai(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900">
+                <option value="trung_tam">Kho trung tâm</option>
+                <option value="cua_hang">Kho cửa hàng</option>
+                <option value="tam">Kho tạm</option>
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs font-medium">Địa chỉ</label>
+              <input value={fDiaChi} onChange={(e) => setFDiaChi(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">SĐT</label>
+              <input value={fSDT} onChange={(e) => setFSDT(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button type="submit" disabled={submitting}
+              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+              {submitting ? "Đang lưu..." : "Tạo kho"}
+            </button>
+            <button type="button" onClick={() => setShowForm(false)}
+              className="rounded border border-gray-300 px-4 py-2 text-sm dark:border-gray-700">Hủy</button>
+          </div>
+        </form>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {loading ? <p className="col-span-full py-6 text-center text-gray-400">Đang tải...</p> : list.length === 0 ? (
+          <p className="col-span-full py-6 text-center text-gray-400">Chưa có kho nào</p>
+        ) : list.map((kho) => (
+          <div key={kho.id} className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="font-medium">{kho.ten_kho}</p>
+                <p className="text-xs text-gray-500">{kho.ma_kho}</p>
+              </div>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                kho.loai_kho === "trung_tam" ? "bg-blue-100 text-blue-700" : kho.loai_kho === "cua_hang" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
+              }`}>
+                {kho.loai_kho === "trung_tam" ? "Trung tâm" : kho.loai_kho === "cua_hang" ? "Cửa hàng" : "Tạm"}
+              </span>
+            </div>
+            {kho.dia_chi && <p className="mt-2 text-xs text-gray-500">{kho.dia_chi}</p>}
+            {kho.dien_thoai && <p className="text-xs text-gray-500">SĐT: {kho.dien_thoai}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ==================== ĐƠN VỊ TÍNH ====================
+function DonViTinhSubTab() {
+  const [list, setList] = useState<DonViTinh[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/wms/don-vi-tinh")
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d)) setList(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+      <table className="w-full text-sm">
+        <thead className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
+          <tr>
+            <th className="px-4 py-2 text-left font-medium text-gray-500">Mã</th>
+            <th className="px-4 py-2 text-left font-medium text-gray-500">Tên</th>
+            <th className="px-4 py-2 text-left font-medium text-gray-500">ĐV mua</th>
+            <th className="px-4 py-2 text-left font-medium text-gray-500">ĐV sử dụng</th>
+            <th className="px-4 py-2 text-right font-medium text-gray-500">Hệ số quy đổi</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+          {loading ? (
+            <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Đang tải...</td></tr>
+          ) : list.length === 0 ? (
+            <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Chưa có đơn vị tính</td></tr>
+          ) : list.map((dvt) => (
+            <tr key={dvt.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
+              <td className="px-4 py-2 font-mono text-xs">{dvt.ma_dvt}</td>
+              <td className="px-4 py-2">{dvt.ten_dvt}</td>
+              <td className="px-4 py-2 text-gray-500">{dvt.dv_mua || "—"}</td>
+              <td className="px-4 py-2 text-gray-500">{dvt.dv_su_dung || "—"}</td>
+              <td className="px-4 py-2 text-right">{dvt.he_so_quy_doi}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ==================== PHÂN LOẠI ====================
+function PhanLoaiSubTab() {
+  const [list, setList] = useState<PhanLoaiHH[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/wms/phan-loai")
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d)) setList(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+      <table className="w-full text-sm">
+        <thead className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
+          <tr>
+            <th className="px-4 py-2 text-left font-medium text-gray-500">Mã</th>
+            <th className="px-4 py-2 text-left font-medium text-gray-500">Tên</th>
+            <th className="px-4 py-2 text-left font-medium text-gray-500">Thuộc tính</th>
+            <th className="px-4 py-2 text-left font-medium text-gray-500">Nhiệt độ</th>
+            <th className="px-4 py-2 text-center font-medium text-gray-500">Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+          {loading ? (
+            <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Đang tải...</td></tr>
+          ) : list.length === 0 ? (
+            <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Chưa có phân loại</td></tr>
+          ) : list.map((pl) => (
+            <tr key={pl.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
+              <td className="px-4 py-2 font-mono text-xs">{pl.ma_phan_loai}</td>
+              <td className="px-4 py-2">{pl.ten_phan_loai}</td>
+              <td className="px-4 py-2 text-gray-500">{pl.thuoc_tinh}</td>
+              <td className="px-4 py-2 text-xs">{NHIET_DO_LABEL[pl.nhiet_do] || pl.nhiet_do}</td>
+              <td className="px-4 py-2 text-center">
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                  pl.trang_thai === "hoat_dong" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
+                }`}>{pl.trang_thai === "hoat_dong" ? "HĐ" : pl.trang_thai}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
