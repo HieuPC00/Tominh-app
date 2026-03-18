@@ -50,25 +50,61 @@ export default function DanhMucTab() {
 }
 
 // ==================== IMPORT COMPONENT ====================
+interface DuplicateInfo {
+  has_duplicates: boolean;
+  duplicate_count: number;
+  duplicates: string[];
+  new_count: number;
+  total: number;
+}
+
+interface ImportResult {
+  success?: boolean;
+  has_duplicates?: boolean;
+  total?: number;
+  inserted?: number;
+  skipped?: number;
+  overwritten?: number;
+  duplicate_count?: number;
+  duplicates?: string[];
+  new_count?: number;
+  errors?: string[];
+}
+
 function ImportExcelButton({ type, onDone }: { type: "nha_cung_cap" | "hang_hoa"; onDone: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{ success?: boolean; total?: number; inserted?: number; errors?: string[] } | null>(null);
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null);
 
-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  async function doImport(file: File, duplicateMode: string) {
     setImporting(true);
     setResult(null);
 
     const formData = new FormData();
     formData.append("file", file);
     formData.append("type", type);
+    formData.append("duplicate_mode", duplicateMode);
 
     try {
       const res = await fetch("/api/wms/import", { method: "POST", body: formData });
-      const data = await res.json();
+      const data: ImportResult = await res.json();
+
+      if (data.has_duplicates && duplicateMode === "check") {
+        // Show duplicate popup
+        setDuplicateInfo({
+          has_duplicates: true,
+          duplicate_count: data.duplicate_count || 0,
+          duplicates: data.duplicates || [],
+          new_count: data.new_count || 0,
+          total: data.total || 0,
+        });
+        setPendingFile(file);
+        setImporting(false);
+        return;
+      }
+
       setResult(data);
       if (data.success) onDone();
     } catch {
@@ -78,6 +114,29 @@ function ImportExcelButton({ type, onDone }: { type: "nha_cung_cap" | "hang_hoa"
       if (fileRef.current) fileRef.current.value = "";
     }
   }
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDuplicateInfo(null);
+    setPendingFile(null);
+    await doImport(file, "check");
+  }
+
+  async function handleDuplicateChoice(mode: "skip" | "overwrite") {
+    if (!pendingFile) return;
+    setDuplicateInfo(null);
+    await doImport(pendingFile, mode);
+    setPendingFile(null);
+  }
+
+  function handleCancel() {
+    setDuplicateInfo(null);
+    setPendingFile(null);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  const label = type === "nha_cung_cap" ? "NCC" : "hàng hóa";
 
   return (
     <div className="inline-flex items-center gap-2">
@@ -92,9 +151,59 @@ function ImportExcelButton({ type, onDone }: { type: "nha_cung_cap" | "hang_hoa"
       {result && (
         <span className={`text-xs ${result.success ? "text-green-600" : "text-red-600"}`}>
           {result.success
-            ? `Thành công: ${result.total} dòng`
+            ? `Thành công: ${result.inserted} mới${result.overwritten ? `, ${result.overwritten} cập nhật` : ""}${result.skipped ? `, ${result.skipped} bỏ qua` : ""} / ${result.total} dòng`
             : result.errors?.[0] || "Lỗi"}
         </span>
+      )}
+
+      {/* Duplicate confirmation popup */}
+      {duplicateInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-full max-w-lg rounded-lg border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-700 dark:bg-gray-900">
+            <h3 className="mb-3 text-lg font-semibold text-orange-600">
+              Phát hiện {duplicateInfo.duplicate_count} {label} trùng mã
+            </h3>
+            <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
+              File có <strong>{duplicateInfo.total}</strong> dòng, trong đó <strong className="text-orange-600">{duplicateInfo.duplicate_count}</strong> mã đã tồn tại
+              và <strong className="text-green-600">{duplicateInfo.new_count}</strong> mã mới.
+            </p>
+
+            {duplicateInfo.duplicates.length > 0 && (
+              <div className="mb-4 max-h-40 overflow-y-auto rounded border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-800">
+                <p className="mb-1 text-xs font-medium text-gray-500">Danh sách trùng (tối đa 20):</p>
+                {duplicateInfo.duplicates.map((d, i) => (
+                  <p key={i} className="truncate text-xs text-gray-600 dark:text-gray-400">{d}</p>
+                ))}
+              </div>
+            )}
+
+            <p className="mb-4 text-sm font-medium">Bạn muốn xử lý như thế nào?</p>
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                onClick={() => handleDuplicateChoice("skip")}
+                disabled={importing}
+                className="flex-1 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {importing ? "Đang xử lý..." : `Bỏ qua trùng (chỉ thêm ${duplicateInfo.new_count} mới)`}
+              </button>
+              <button
+                onClick={() => handleDuplicateChoice("overwrite")}
+                disabled={importing}
+                className="flex-1 rounded bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-50"
+              >
+                {importing ? "Đang xử lý..." : `Ghi đè tất cả (${duplicateInfo.total} dòng)`}
+              </button>
+              <button
+                onClick={handleCancel}
+                disabled={importing}
+                className="rounded border border-gray-300 px-4 py-2 text-sm dark:border-gray-600"
+              >
+                Hủy
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
