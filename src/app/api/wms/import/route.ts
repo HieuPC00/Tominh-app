@@ -42,29 +42,74 @@ async function importNhaCungCap(supabase: any, workbook: XLSX.WorkBook, duplicat
   const sheet = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
 
-  // Find header row
+  // Find header row — look for any recognizable NCC column header
   let headerIdx = -1;
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
     const row = rows[i];
-    if (row && row.some((cell) => String(cell || "").includes("Mã nhà cung cấp") || String(cell || "").includes("Tên nhà cung cấp"))) {
+    if (!row) continue;
+    const rowText = row.map((cell) => String(cell || "").toLowerCase());
+    if (rowText.some((t) =>
+      t.includes("mã nhà cung cấp") || t.includes("tên nhà cung cấp") ||
+      t.includes("mã ncc") || t.includes("tên ncc") ||
+      (t.includes("mst") && rowText.some((t2) => t2.includes("địa chỉ") || t2.includes("dia chi")))
+    )) {
       headerIdx = i;
       break;
     }
   }
 
   if (headerIdx === -1) {
-    return NextResponse.json({ error: "Không tìm thấy header trong file. Cần có cột: STT, Mã nhà cung cấp, Tên nhà cung cấp, Địa chỉ, MST/CCCD, SĐT" }, { status: 400 });
+    return NextResponse.json({ error: "Không tìm thấy header trong file. Cần có cột: Mã nhà cung cấp, Tên nhà cung cấp, Địa chỉ, MST/CCCD, SĐT" }, { status: 400 });
   }
 
-  // Cols: 0=STT, 1=Mã nhà cung cấp, 2=Tên nhà cung cấp, 3=Địa chỉ, 4=MST/CCCD, 5=SĐT
-  const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r[1]);
-  const records = dataRows.map((r) => ({
-    ma_ncc: String(r[1] || "").trim().slice(0, 30),
-    ten_ncc: String(r[2] || "").trim().slice(0, 255),
-    dia_chi: r[3] ? String(r[3]).trim() : null,
-    ma_so_thue: r[4] ? String(r[4]).trim().slice(0, 30) : null,
-    dien_thoai: r[5] ? String(r[5]).trim().slice(0, 20) : null,
-  })).filter((r) => r.ma_ncc && r.ten_ncc);
+  // Dynamically detect column positions from header row
+  const headerRow = rows[headerIdx].map((cell) => String(cell || "").toLowerCase().trim());
+  const colMap = { ma: -1, ten: -1, diaChi: -1, mst: -1, sdt: -1 };
+
+  for (let c = 0; c < headerRow.length; c++) {
+    const h = headerRow[c];
+    if (h.includes("mã nhà cung cấp") || h.includes("mã ncc") || h === "mã") {
+      colMap.ma = c;
+    } else if (h.includes("tên nhà cung cấp") || h.includes("tên ncc") || h === "tên") {
+      colMap.ten = c;
+    } else if (h.includes("địa chỉ") || h.includes("dia chi") || h === "địa chỉ") {
+      colMap.diaChi = c;
+    } else if (h.includes("mst") || h.includes("mã số thuế") || h.includes("cccd") || h.includes("ma so thue")) {
+      colMap.mst = c;
+    } else if (h.includes("sđt") || h.includes("số điện thoại") || h.includes("điện thoại") || h.includes("sdt") || h === "đt") {
+      colMap.sdt = c;
+    }
+  }
+
+  // If no "mã" column found, the file might not have separate code column
+  // In that case ten_ncc becomes the key identifier
+  const hasMaCol = colMap.ma !== -1;
+  const hasTenCol = colMap.ten !== -1;
+
+  if (!hasMaCol && !hasTenCol) {
+    return NextResponse.json({ error: "Không tìm thấy cột Mã NCC hoặc Tên NCC trong header" }, { status: 400 });
+  }
+
+  const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r.length > 1);
+  const records = dataRows.map((r) => {
+    const ma = hasMaCol ? String(r[colMap.ma] || "").trim().slice(0, 50) : "";
+    const ten = hasTenCol ? String(r[colMap.ten] || "").trim().slice(0, 255) : "";
+    const diaChi = colMap.diaChi !== -1 && r[colMap.diaChi] ? String(r[colMap.diaChi]).trim() : null;
+    const mst = colMap.mst !== -1 && r[colMap.mst] ? String(r[colMap.mst]).trim().slice(0, 50) : null;
+    const sdt = colMap.sdt !== -1 && r[colMap.sdt] ? String(r[colMap.sdt]).trim().slice(0, 30) : null;
+    return { ma_ncc: ma, ten_ncc: ten, dia_chi: diaChi, ma_so_thue: mst, dien_thoai: sdt };
+  }).filter((r) => (r.ma_ncc || r.ten_ncc));
+
+  // If no ma_ncc column, auto-generate codes from ten_ncc
+  if (!hasMaCol) {
+    let autoIdx = 1;
+    for (const rec of records) {
+      if (!rec.ma_ncc && rec.ten_ncc) {
+        rec.ma_ncc = `NCC${String(autoIdx).padStart(4, "0")}`;
+        autoIdx++;
+      }
+    }
+  }
 
   // Check for duplicates: fetch all existing ma_ncc then compare in JS
   const importCodes = new Set(records.map((r) => r.ma_ncc));
@@ -175,7 +220,13 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
   let headerIdx = -1;
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
     const row = rows[i];
-    if (row && row.some((cell) => String(cell || "") === "Mã" || String(cell || "").includes("Tên"))) {
+    if (!row) continue;
+    const rowText = row.map((cell) => String(cell || "").toLowerCase());
+    if (rowText.some((t) =>
+      t === "mã" || t.includes("mã hàng") || t.includes("tên hàng") ||
+      t.includes("ma hang") || t.includes("ten hang") ||
+      (t.includes("đvt") && rowText.some((t2) => t2.includes("tên")))
+    )) {
       headerIdx = i;
       break;
     }
@@ -183,6 +234,31 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
 
   if (headerIdx === -1) {
     return NextResponse.json({ error: "Không tìm thấy header trong file" }, { status: 400 });
+  }
+
+  // Dynamically detect column positions from header row
+  const headerRow = rows[headerIdx].map((cell) => String(cell || "").toLowerCase().trim());
+  const hhColMap = { ma: -1, ten: -1, qcDongGoi: -1, nhomVTHH: -1, dvt: -1, hsd: -1, nguonGoc: -1, gia: -1 };
+
+  for (let c = 0; c < headerRow.length; c++) {
+    const h = headerRow[c];
+    if (h === "mã" || h.includes("mã hàng") || h.includes("ma hang") || h === "mã hh") {
+      hhColMap.ma = c;
+    } else if (h.includes("tên") || h.includes("ten hang") || h === "tên hàng hóa") {
+      if (hhColMap.ten === -1) hhColMap.ten = c; // first "tên" match
+    } else if (h.includes("quy cách") || h.includes("đóng gói") || h.includes("qc")) {
+      hhColMap.qcDongGoi = c;
+    } else if (h.includes("nhóm") || h.includes("phân loại") || h.includes("vthh") || h.includes("loại")) {
+      hhColMap.nhomVTHH = c;
+    } else if (h.includes("đvt") || h.includes("đơn vị") || h.includes("don vi")) {
+      hhColMap.dvt = c;
+    } else if (h.includes("hạn sử dụng") || h.includes("hsd") || h.includes("han su dung")) {
+      hhColMap.hsd = c;
+    } else if (h.includes("nguồn gốc") || h.includes("xuất xứ") || h.includes("nguon goc")) {
+      hhColMap.nguonGoc = c;
+    } else if (h.includes("giá") || h.includes("gia") || h.includes("đơn giá")) {
+      hhColMap.gia = c;
+    }
   }
 
   const { data: dvtList } = await supabase.from("don_vi_tinh").select("id, ten_dvt, ma_dvt");
@@ -200,11 +276,11 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
     plMap.set(p.ma_phan_loai.toLowerCase(), p.id);
   });
 
-  const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r[1]);
+  const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r.length > 1);
   const records = dataRows.map((r) => {
-    const nhomVTHH = String(r[4] || "").trim();
-    const dvtText = String(r[5] || "").trim();
-    const hsdText = String(r[6] || "").trim();
+    const nhomVTHH = hhColMap.nhomVTHH !== -1 ? String(r[hhColMap.nhomVTHH] || "").trim() : "";
+    const dvtText = hhColMap.dvt !== -1 ? String(r[hhColMap.dvt] || "").trim() : "";
+    const hsdText = hhColMap.hsd !== -1 ? String(r[hhColMap.hsd] || "").trim() : "";
 
     let hsdNgay: number | null = null;
     if (hsdText) {
@@ -218,13 +294,13 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
     }
 
     return {
-      ma_hang_hoa: String(r[1] || "").trim(),
-      ten: String(r[2] || "").trim(),
+      ma_hang_hoa: hhColMap.ma !== -1 ? String(r[hhColMap.ma] || "").trim() : "",
+      ten: hhColMap.ten !== -1 ? String(r[hhColMap.ten] || "").trim() : "",
       phan_loai_id: plMap.get(nhomVTHH.toLowerCase()) || null,
       dvt_id: dvtMap.get(dvtText.toLowerCase()) || null,
-      nguon_goc: r[7] ? String(r[7]).trim() : null,
+      nguon_goc: hhColMap.nguonGoc !== -1 && r[hhColMap.nguonGoc] ? String(r[hhColMap.nguonGoc]).trim() : null,
       han_su_dung_ngay: hsdNgay,
-      gia_binh_quan: r[8] ? parseFloat(String(r[8])) || 0 : 0,
+      gia_binh_quan: hhColMap.gia !== -1 && r[hhColMap.gia] ? parseFloat(String(r[hhColMap.gia])) || 0 : 0,
     };
   }).filter((r) => r.ma_hang_hoa && r.ten);
 
