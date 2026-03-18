@@ -71,7 +71,7 @@ interface ImportResult {
   errors?: string[];
 }
 
-function ImportExcelButton({ type, onDone }: { type: "nha_cung_cap" | "hang_hoa"; onDone: () => void }) {
+function ImportExcelButton({ type, onDone }: { type: "nha_cung_cap" | "hang_hoa" | "don_vi_tinh" | "phan_loai_hh"; onDone: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -136,7 +136,8 @@ function ImportExcelButton({ type, onDone }: { type: "nha_cung_cap" | "hang_hoa"
     if (fileRef.current) fileRef.current.value = "";
   }
 
-  const label = type === "nha_cung_cap" ? "NCC" : "hàng hóa";
+  const labelMap: Record<string, string> = { nha_cung_cap: "NCC", hang_hoa: "hàng hóa", don_vi_tinh: "ĐVT", phan_loai_hh: "phân loại" };
+  const label = labelMap[type] || type;
 
   return (
     <div className="inline-flex items-center gap-2">
@@ -839,42 +840,70 @@ function KhoSubTab() {
 function DonViTinhSubTab() {
   const [list, setList] = useState<DonViTinh[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    fetch("/api/wms/don-vi-tinh")
-      .then((r) => r.json())
-      .then((d) => { if (Array.isArray(d)) setList(d); setLoading(false); })
-      .catch(() => setLoading(false));
+  const fetchList = useCallback(async () => {
+    setLoading(true);
+    const res = await fetch("/api/wms/don-vi-tinh");
+    const d = await res.json();
+    if (Array.isArray(d)) setList(d);
+    setLoading(false);
   }, []);
 
+  useEffect(() => { fetchList(); }, [fetchList]);
+
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
-      <table className="w-full text-sm">
-        <thead className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
-          <tr>
-            <th className="px-4 py-2 text-left font-medium text-gray-500">Mã</th>
-            <th className="px-4 py-2 text-left font-medium text-gray-500">Tên</th>
-            <th className="px-4 py-2 text-left font-medium text-gray-500">ĐV mua</th>
-            <th className="px-4 py-2 text-left font-medium text-gray-500">ĐV sử dụng</th>
-            <th className="px-4 py-2 text-right font-medium text-gray-500">Hệ số quy đổi</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-          {loading ? (
-            <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Đang tải...</td></tr>
-          ) : list.length === 0 ? (
-            <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Chưa có đơn vị tính</td></tr>
-          ) : list.map((dvt) => (
-            <tr key={dvt.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
-              <td className="px-4 py-2 font-mono text-xs">{dvt.ma_dvt}</td>
-              <td className="px-4 py-2">{dvt.ten_dvt}</td>
-              <td className="px-4 py-2 text-gray-500">{dvt.dv_mua || "—"}</td>
-              <td className="px-4 py-2 text-gray-500">{dvt.dv_su_dung || "—"}</td>
-              <td className="px-4 py-2 text-right">{dvt.he_so_quy_doi}</td>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm text-gray-500">{list.length} đơn vị tính</span>
+        <div className="flex gap-2">
+          {list.length > 0 && (
+            <button
+              onClick={async () => {
+                if (!confirm(`Xóa tất cả ${list.length} đơn vị tính? Hành động này không thể hoàn tác!`)) return;
+                setDeleting(true);
+                await fetch("/api/wms/don-vi-tinh?action=delete_all", { method: "DELETE" });
+                setDeleting(false);
+                fetchList();
+              }}
+              disabled={deleting}
+              className="rounded border border-red-600 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950"
+            >
+              {deleting ? "Đang xóa..." : `Xóa tất cả (${list.length})`}
+            </button>
+          )}
+          <ImportExcelButton type="don_vi_tinh" onDone={fetchList} />
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+        <table className="w-full text-sm">
+          <thead className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
+            <tr>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Mã</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Tên</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">ĐV mua</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">ĐV sử dụng</th>
+              <th className="px-4 py-2 text-right font-medium text-gray-500">Hệ số quy đổi</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+            {loading ? (
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Đang tải...</td></tr>
+            ) : list.length === 0 ? (
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Chưa có đơn vị tính</td></tr>
+            ) : list.map((dvt) => (
+              <tr key={dvt.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
+                <td className="px-4 py-2 font-mono text-xs">{dvt.ma_dvt}</td>
+                <td className="px-4 py-2">{dvt.ten_dvt}</td>
+                <td className="px-4 py-2 text-gray-500">{dvt.dv_mua || "—"}</td>
+                <td className="px-4 py-2 text-gray-500">{dvt.dv_su_dung || "—"}</td>
+                <td className="px-4 py-2 text-right">{dvt.he_so_quy_doi}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -883,46 +912,74 @@ function DonViTinhSubTab() {
 function PhanLoaiSubTab() {
   const [list, setList] = useState<PhanLoaiHH[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    fetch("/api/wms/phan-loai")
-      .then((r) => r.json())
-      .then((d) => { if (Array.isArray(d)) setList(d); setLoading(false); })
-      .catch(() => setLoading(false));
+  const fetchList = useCallback(async () => {
+    setLoading(true);
+    const res = await fetch("/api/wms/phan-loai");
+    const d = await res.json();
+    if (Array.isArray(d)) setList(d);
+    setLoading(false);
   }, []);
 
+  useEffect(() => { fetchList(); }, [fetchList]);
+
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
-      <table className="w-full text-sm">
-        <thead className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
-          <tr>
-            <th className="px-4 py-2 text-left font-medium text-gray-500">Mã</th>
-            <th className="px-4 py-2 text-left font-medium text-gray-500">Tên</th>
-            <th className="px-4 py-2 text-left font-medium text-gray-500">Thuộc tính</th>
-            <th className="px-4 py-2 text-left font-medium text-gray-500">Nhiệt độ</th>
-            <th className="px-4 py-2 text-center font-medium text-gray-500">Trạng thái</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-          {loading ? (
-            <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Đang tải...</td></tr>
-          ) : list.length === 0 ? (
-            <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Chưa có phân loại</td></tr>
-          ) : list.map((pl) => (
-            <tr key={pl.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
-              <td className="px-4 py-2 font-mono text-xs">{pl.ma_phan_loai}</td>
-              <td className="px-4 py-2">{pl.ten_phan_loai}</td>
-              <td className="px-4 py-2 text-gray-500">{pl.thuoc_tinh}</td>
-              <td className="px-4 py-2 text-xs">{NHIET_DO_LABEL[pl.nhiet_do] || pl.nhiet_do}</td>
-              <td className="px-4 py-2 text-center">
-                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                  pl.trang_thai === "hoat_dong" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
-                }`}>{pl.trang_thai === "hoat_dong" ? "HĐ" : pl.trang_thai}</span>
-              </td>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm text-gray-500">{list.length} phân loại</span>
+        <div className="flex gap-2">
+          {list.length > 0 && (
+            <button
+              onClick={async () => {
+                if (!confirm(`Xóa tất cả ${list.length} phân loại? Hành động này không thể hoàn tác!`)) return;
+                setDeleting(true);
+                await fetch("/api/wms/phan-loai?action=delete_all", { method: "DELETE" });
+                setDeleting(false);
+                fetchList();
+              }}
+              disabled={deleting}
+              className="rounded border border-red-600 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950"
+            >
+              {deleting ? "Đang xóa..." : `Xóa tất cả (${list.length})`}
+            </button>
+          )}
+          <ImportExcelButton type="phan_loai_hh" onDone={fetchList} />
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+        <table className="w-full text-sm">
+          <thead className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
+            <tr>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Mã</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Tên</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Thuộc tính</th>
+              <th className="px-4 py-2 text-left font-medium text-gray-500">Nhiệt độ</th>
+              <th className="px-4 py-2 text-center font-medium text-gray-500">Trạng thái</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+            {loading ? (
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Đang tải...</td></tr>
+            ) : list.length === 0 ? (
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-400">Chưa có phân loại</td></tr>
+            ) : list.map((pl) => (
+              <tr key={pl.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
+                <td className="px-4 py-2 font-mono text-xs">{pl.ma_phan_loai}</td>
+                <td className="px-4 py-2">{pl.ten_phan_loai}</td>
+                <td className="px-4 py-2 text-gray-500">{pl.thuoc_tinh}</td>
+                <td className="px-4 py-2 text-xs">{NHIET_DO_LABEL[pl.nhiet_do] || pl.nhiet_do}</td>
+                <td className="px-4 py-2 text-center">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    pl.trang_thai === "hoat_dong" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
+                  }`}>{pl.trang_thai === "hoat_dong" ? "HĐ" : pl.trang_thai}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

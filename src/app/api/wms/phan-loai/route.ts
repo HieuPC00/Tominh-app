@@ -38,3 +38,25 @@ export async function GET(request: Request) {
     );
   }
 }
+
+// DELETE /api/wms/phan-loai?action=delete_all — delete all phan_loai_hh records
+export async function DELETE(request: Request) {
+  try {
+    const supabase = await createClient();
+    const { searchParams } = new URL(request.url);
+    const action = searchParams.get("action");
+
+    if (action === "delete_all") {
+      const { error } = await supabase
+        .from("phan_loai_hh")
+        .delete()
+        .neq("id", "00000000-0000-0000-0000-000000000000");
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ success: true, message: "Đã xóa tất cả phân loại" });
+    }
+
+    return NextResponse.json({ error: "Missing action parameter" }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}

@@ -7,7 +7,7 @@ export async function POST(request: Request) {
     const supabase = await createClient();
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
-    const type = formData.get("type") as string; // "nha_cung_cap" | "hang_hoa"
+    const type = formData.get("type") as string; // "nha_cung_cap" | "hang_hoa" | "don_vi_tinh" | "phan_loai_hh"
     const duplicateMode = (formData.get("duplicate_mode") as string) || "check";
     // "check" = first pass, detect duplicates and return list
     // "skip"  = insert only new records, skip duplicates
@@ -24,6 +24,10 @@ export async function POST(request: Request) {
       return await importNhaCungCap(supabase, workbook, duplicateMode);
     } else if (type === "hang_hoa") {
       return await importHangHoa(supabase, workbook, duplicateMode);
+    } else if (type === "don_vi_tinh") {
+      return await importDonViTinh(supabase, workbook, duplicateMode);
+    } else if (type === "phan_loai_hh") {
+      return await importPhanLoaiHH(supabase, workbook, duplicateMode);
     }
 
     return NextResponse.json({ error: "Loại import không hợp lệ" }, { status: 400 });
@@ -280,22 +284,77 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
     }
   }
 
-  const { data: dvtList } = await supabase.from("don_vi_tinh").select("id, ten_dvt, ma_dvt");
-  const { data: plList } = await supabase.from("phan_loai_hh").select("id, ten_phan_loai, ma_phan_loai");
+  // --- Auto-create missing DVT and Phân loại from Excel data ---
+  const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r.length > 1);
 
+  // Collect unique DVT and Nhóm VTHH values from Excel
+  const uniqueDvtNames = new Set<string>();
+  const uniquePlNames = new Set<string>();
+  for (const r of dataRows) {
+    const dvtText = hhColMap.dvt !== -1 ? String(r[hhColMap.dvt] || "").trim() : "";
+    const plText = hhColMap.nhomVTHH !== -1 ? String(r[hhColMap.nhomVTHH] || "").trim() : "";
+    if (dvtText) uniqueDvtNames.add(dvtText);
+    if (plText) uniquePlNames.add(plText);
+  }
+
+  // Fetch existing DVT, auto-create missing ones
+  const { data: dvtList } = await supabase.from("don_vi_tinh").select("id, ten_dvt, ma_dvt");
   const dvtMap = new Map<string, string>();
   (dvtList || []).forEach((d: { id: string; ten_dvt: string; ma_dvt: string }) => {
     dvtMap.set(d.ten_dvt.toLowerCase(), d.id);
     dvtMap.set(d.ma_dvt.toLowerCase(), d.id);
   });
 
+  // Create missing DVT entries
+  const missingDvt = [...uniqueDvtNames].filter((name) => !dvtMap.has(name.toLowerCase()));
+  if (missingDvt.length > 0) {
+    let dvtIdx = (dvtList || []).length + 1;
+    for (let i = 0; i < missingDvt.length; i += 50) {
+      const batch = missingDvt.slice(i, i + 50).map((name) => ({
+        ma_dvt: `DVT${String(dvtIdx++).padStart(3, "0")}`,
+        ten_dvt: name,
+        he_so_quy_doi: 1,
+      }));
+      const { data: created } = await supabase.from("don_vi_tinh").upsert(batch, { onConflict: "ma_dvt", ignoreDuplicates: true }).select("id, ten_dvt, ma_dvt");
+      if (created) {
+        for (const d of created) {
+          dvtMap.set(d.ten_dvt.toLowerCase(), d.id);
+          dvtMap.set(d.ma_dvt.toLowerCase(), d.id);
+        }
+      }
+    }
+  }
+
+  // Fetch existing Phân loại, auto-create missing ones
+  const { data: plList } = await supabase.from("phan_loai_hh").select("id, ten_phan_loai, ma_phan_loai");
   const plMap = new Map<string, string>();
   (plList || []).forEach((p: { id: string; ten_phan_loai: string; ma_phan_loai: string }) => {
     plMap.set(p.ten_phan_loai.toLowerCase(), p.id);
     plMap.set(p.ma_phan_loai.toLowerCase(), p.id);
   });
 
-  const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r.length > 1);
+  // Create missing Phân loại entries
+  const missingPl = [...uniquePlNames].filter((name) => !plMap.has(name.toLowerCase()));
+  if (missingPl.length > 0) {
+    let plIdx = (plList || []).length + 1;
+    for (let i = 0; i < missingPl.length; i += 50) {
+      const batch = missingPl.slice(i, i + 50).map((name) => ({
+        ma_phan_loai: `PL${String(plIdx++).padStart(3, "0")}`,
+        ten_phan_loai: name,
+        thuoc_tinh: "",
+        nhiet_do: "thuong" as const,
+      }));
+      const { data: created } = await supabase.from("phan_loai_hh").upsert(batch, { onConflict: "ma_phan_loai", ignoreDuplicates: true }).select("id, ten_phan_loai, ma_phan_loai");
+      if (created) {
+        for (const p of created) {
+          plMap.set(p.ten_phan_loai.toLowerCase(), p.id);
+          plMap.set(p.ma_phan_loai.toLowerCase(), p.id);
+        }
+      }
+    }
+  }
+
+  // --- Build hang_hoa records with resolved DVT & Phân loại IDs ---
   const records = dataRows.map((r) => {
     const nhomVTHH = hhColMap.nhomVTHH !== -1 ? String(r[hhColMap.nhomVTHH] || "").trim() : "";
     const dvtText = hhColMap.dvt !== -1 ? String(r[hhColMap.dvt] || "").trim() : "";
@@ -303,13 +362,17 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
 
     let hsdNgay: number | null = null;
     if (hsdText) {
-      const numMatch = hsdText.match(/(\d+)/);
-      if (numMatch) {
-        const num = parseInt(numMatch[1]);
-        if (hsdText.includes("tháng")) hsdNgay = num * 30;
-        else if (hsdText.includes("ngày")) hsdNgay = num;
-        else if (hsdText.includes("năm")) hsdNgay = num * 365;
-        else hsdNgay = num; // default to days
+      if (hsdText.includes("không thời hạn") || hsdText.includes("Không thời hạn")) {
+        hsdNgay = null;
+      } else {
+        const numMatch = hsdText.match(/(\d+)/);
+        if (numMatch) {
+          const num = parseInt(numMatch[1]);
+          if (hsdText.includes("tháng")) hsdNgay = num * 30;
+          else if (hsdText.includes("ngày")) hsdNgay = num;
+          else if (hsdText.includes("năm")) hsdNgay = num * 365;
+          else hsdNgay = num;
+        }
       }
     }
 
@@ -322,6 +385,7 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
       nguon_goc: hhColMap.nguonGoc !== -1 && r[hhColMap.nguonGoc] ? String(r[hhColMap.nguonGoc]).trim() : null,
       han_su_dung_ngay: hsdNgay,
       gia_binh_quan: hhColMap.gia !== -1 && r[hhColMap.gia] ? parseFloat(String(r[hhColMap.gia])) || 0 : 0,
+      is_deleted: false,
     };
   }).filter((r) => r.ma_hang_hoa && r.ten);
 
@@ -334,7 +398,6 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
     const { data: batch, error: qErr } = await supabase
       .from("hang_hoa")
       .select("ma_hang_hoa, ten")
-      .eq("is_deleted", false)
       .range(page * 1000, (page + 1) * 1000 - 1);
     if (qErr) { console.error("Duplicate check error:", qErr); break; }
     if (!batch || batch.length === 0) break;
@@ -414,6 +477,284 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
   return NextResponse.json({
     success: true,
     type: "hang_hoa",
+    total: records.length,
+    inserted,
+    skipped,
+    overwritten: duplicateMode === "overwrite" ? duplicateCount : 0,
+    errors,
+  });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function importDonViTinh(supabase: any, workbook: XLSX.WorkBook, duplicateMode: string) {
+  const sheetName = workbook.SheetNames.find((s) =>
+    s.toLowerCase().includes("đơn vị") || s.toLowerCase().includes("don vi") || s.toLowerCase().includes("dvt")
+  ) || workbook.SheetNames[0];
+
+  const sheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
+
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const row = rows[i];
+    if (!row) continue;
+    const rowText = row.map((cell) => String(cell || "").toLowerCase());
+    if (rowText.some((t) =>
+      t.includes("mã đvt") || t.includes("mã dvt") || t.includes("tên đvt") || t.includes("tên dvt") ||
+      t.includes("đơn vị tính") || t.includes("don vi tinh") ||
+      (t.includes("đvt") && rowText.some((t2) => t2.includes("tên")))
+    )) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  if (headerIdx === -1) {
+    return NextResponse.json({ error: "Không tìm thấy header. Cần có cột: Mã ĐVT, Tên ĐVT" }, { status: 400 });
+  }
+
+  const headerRow = rows[headerIdx].map((cell) => String(cell || "").toLowerCase().trim());
+  const colMap = { ma: -1, ten: -1, dvMua: -1, dvSuDung: -1, heSo: -1 };
+
+  for (let c = 0; c < headerRow.length; c++) {
+    const h = headerRow[c];
+    if (h.includes("mã đvt") || h.includes("mã dvt") || h === "mã") {
+      colMap.ma = c;
+    } else if (h.includes("tên đvt") || h.includes("tên dvt") || h === "tên" || h.includes("đơn vị tính") || h.includes("tên đơn vị")) {
+      if (colMap.ten === -1) colMap.ten = c;
+    } else if (h.includes("đv mua") || h.includes("dv mua") || h.includes("đơn vị mua")) {
+      colMap.dvMua = c;
+    } else if (h.includes("đv sử dụng") || h.includes("dv su dung") || h.includes("đơn vị sử dụng")) {
+      colMap.dvSuDung = c;
+    } else if (h.includes("hệ số") || h.includes("he so") || h.includes("quy đổi") || h.includes("quy doi")) {
+      colMap.heSo = c;
+    }
+  }
+
+  if (colMap.ma === -1 && colMap.ten === -1) {
+    return NextResponse.json({ error: "Không tìm thấy cột Mã ĐVT hoặc Tên ĐVT trong header" }, { status: 400 });
+  }
+
+  const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r.length > 0);
+  const records = dataRows.map((r) => ({
+    ma_dvt: colMap.ma !== -1 ? String(r[colMap.ma] || "").trim() : "",
+    ten_dvt: colMap.ten !== -1 ? String(r[colMap.ten] || "").trim() : "",
+    dv_mua: colMap.dvMua !== -1 && r[colMap.dvMua] ? String(r[colMap.dvMua]).trim() : null,
+    dv_su_dung: colMap.dvSuDung !== -1 && r[colMap.dvSuDung] ? String(r[colMap.dvSuDung]).trim() : null,
+    he_so_quy_doi: colMap.heSo !== -1 && r[colMap.heSo] ? parseFloat(String(r[colMap.heSo])) || 1 : 1,
+  })).filter((r) => r.ma_dvt && r.ten_dvt);
+
+  // Auto-gen ma_dvt if column missing
+  if (colMap.ma === -1) {
+    let autoIdx = 1;
+    for (const rec of records) {
+      if (!rec.ma_dvt && rec.ten_dvt) {
+        rec.ma_dvt = `DVT${String(autoIdx).padStart(3, "0")}`;
+        autoIdx++;
+      }
+    }
+  }
+
+  // Duplicate check
+  const importCodes = new Set(records.map((r) => r.ma_dvt));
+  const { data: allDvt } = await supabase
+    .from("don_vi_tinh")
+    .select("ma_dvt, ten_dvt")
+    .order("ma_dvt")
+    .limit(5000);
+
+  const duplicates = (allDvt || [])
+    .filter((row: { ma_dvt: string }) => importCodes.has(row.ma_dvt)) as { ma_dvt: string; ten_dvt: string }[];
+  const existingSet = new Set(duplicates.map((e) => e.ma_dvt));
+  const duplicateCount = duplicates.length;
+
+  if (duplicateMode === "check" && duplicateCount > 0) {
+    return NextResponse.json({
+      success: false,
+      has_duplicates: true,
+      type: "don_vi_tinh",
+      total: records.length,
+      duplicate_count: duplicateCount,
+      duplicates: duplicates.slice(0, 20).map((d) => `${d.ma_dvt} - ${d.ten_dvt}`),
+      new_count: records.length - duplicateCount,
+    });
+  }
+
+  let toInsert = records;
+  if (duplicateMode === "skip") {
+    toInsert = records.filter((r) => !existingSet.has(r.ma_dvt));
+  }
+
+  let inserted = 0;
+  let skipped = duplicateMode === "skip" ? duplicateCount : 0;
+  const errors: string[] = [];
+
+  if (toInsert.length === 0) {
+    return NextResponse.json({ success: true, type: "don_vi_tinh", total: records.length, inserted: 0, skipped: records.length, errors: [] });
+  }
+
+  if (duplicateMode === "skip") {
+    for (let i = 0; i < toInsert.length; i += 50) {
+      const batch = toInsert.slice(i, i + 50);
+      const { error, data } = await supabase.from("don_vi_tinh").insert(batch).select();
+      if (error) { errors.push(`Batch ${i / 50 + 1}: ${error.message}`); skipped += batch.length; }
+      else { inserted += data?.length || batch.length; }
+    }
+  } else {
+    for (let i = 0; i < toInsert.length; i += 50) {
+      const batch = toInsert.slice(i, i + 50);
+      const { error, data } = await supabase.from("don_vi_tinh").upsert(batch, { onConflict: "ma_dvt", ignoreDuplicates: false }).select();
+      if (error) { errors.push(`Batch ${i / 50 + 1}: ${error.message}`); skipped += batch.length; }
+      else { inserted += data?.length || batch.length; }
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+    type: "don_vi_tinh",
+    total: records.length,
+    inserted,
+    skipped,
+    overwritten: duplicateMode === "overwrite" ? duplicateCount : 0,
+    errors,
+  });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function importPhanLoaiHH(supabase: any, workbook: XLSX.WorkBook, duplicateMode: string) {
+  const sheetName = workbook.SheetNames.find((s) =>
+    s.toLowerCase().includes("phân loại") || s.toLowerCase().includes("phan loai") || s.toLowerCase().includes("nhóm")
+  ) || workbook.SheetNames[0];
+
+  const sheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
+
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const row = rows[i];
+    if (!row) continue;
+    const rowText = row.map((cell) => String(cell || "").toLowerCase());
+    if (rowText.some((t) =>
+      t.includes("mã phân loại") || t.includes("tên phân loại") ||
+      t.includes("ma phan loai") || t.includes("ten phan loai") ||
+      t.includes("nhóm hàng") || t.includes("nhóm vthh") ||
+      (t.includes("phân loại") && rowText.some((t2) => t2.includes("tên") || t2.includes("mã")))
+    )) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  if (headerIdx === -1) {
+    return NextResponse.json({ error: "Không tìm thấy header. Cần có cột: Mã phân loại, Tên phân loại" }, { status: 400 });
+  }
+
+  const headerRow = rows[headerIdx].map((cell) => String(cell || "").toLowerCase().trim());
+  const colMap = { ma: -1, ten: -1, thuocTinh: -1, nhietDo: -1 };
+
+  for (let c = 0; c < headerRow.length; c++) {
+    const h = headerRow[c];
+    if (h.includes("mã phân loại") || h.includes("mã nhóm") || h === "mã") {
+      colMap.ma = c;
+    } else if (h.includes("tên phân loại") || h.includes("tên nhóm") || h === "tên" || h.includes("nhóm hàng") || h.includes("nhóm vthh")) {
+      if (colMap.ten === -1) colMap.ten = c;
+    } else if (h.includes("thuộc tính") || h.includes("thuoc tinh") || h.includes("mô tả") || h.includes("ghi chú")) {
+      colMap.thuocTinh = c;
+    } else if (h.includes("nhiệt độ") || h.includes("nhiet do") || h.includes("bảo quản")) {
+      colMap.nhietDo = c;
+    }
+  }
+
+  if (colMap.ma === -1 && colMap.ten === -1) {
+    return NextResponse.json({ error: "Không tìm thấy cột Mã hoặc Tên phân loại trong header" }, { status: 400 });
+  }
+
+  const nhietDoMap: Record<string, string> = {
+    "thường": "thuong", "thuong": "thuong", "bình thường": "thuong",
+    "mát": "mat", "mat": "mat",
+    "lạnh": "lanh", "lanh": "lanh",
+    "đông": "dong", "dong": "dong",
+  };
+
+  const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r.length > 0);
+  const records = dataRows.map((r) => {
+    const nhietDoText = colMap.nhietDo !== -1 && r[colMap.nhietDo] ? String(r[colMap.nhietDo]).trim().toLowerCase() : "";
+    return {
+      ma_phan_loai: colMap.ma !== -1 ? String(r[colMap.ma] || "").trim() : "",
+      ten_phan_loai: colMap.ten !== -1 ? String(r[colMap.ten] || "").trim() : "",
+      thuoc_tinh: colMap.thuocTinh !== -1 && r[colMap.thuocTinh] ? String(r[colMap.thuocTinh]).trim() : "",
+      nhiet_do: nhietDoMap[nhietDoText] || "thuong",
+    };
+  }).filter((r) => r.ma_phan_loai || r.ten_phan_loai);
+
+  // Auto-gen ma_phan_loai if column missing
+  if (colMap.ma === -1) {
+    let autoIdx = 1;
+    for (const rec of records) {
+      if (!rec.ma_phan_loai && rec.ten_phan_loai) {
+        rec.ma_phan_loai = `PL${String(autoIdx).padStart(3, "0")}`;
+        autoIdx++;
+      }
+    }
+  }
+
+  // Duplicate check
+  const importCodes = new Set(records.map((r) => r.ma_phan_loai));
+  const { data: allPl } = await supabase
+    .from("phan_loai_hh")
+    .select("ma_phan_loai, ten_phan_loai")
+    .order("ma_phan_loai")
+    .limit(5000);
+
+  const duplicates = (allPl || [])
+    .filter((row: { ma_phan_loai: string }) => importCodes.has(row.ma_phan_loai)) as { ma_phan_loai: string; ten_phan_loai: string }[];
+  const existingSet = new Set(duplicates.map((e) => e.ma_phan_loai));
+  const duplicateCount = duplicates.length;
+
+  if (duplicateMode === "check" && duplicateCount > 0) {
+    return NextResponse.json({
+      success: false,
+      has_duplicates: true,
+      type: "phan_loai_hh",
+      total: records.length,
+      duplicate_count: duplicateCount,
+      duplicates: duplicates.slice(0, 20).map((d) => `${d.ma_phan_loai} - ${d.ten_phan_loai}`),
+      new_count: records.length - duplicateCount,
+    });
+  }
+
+  let toInsert = records;
+  if (duplicateMode === "skip") {
+    toInsert = records.filter((r) => !existingSet.has(r.ma_phan_loai));
+  }
+
+  let inserted = 0;
+  let skipped = duplicateMode === "skip" ? duplicateCount : 0;
+  const errors: string[] = [];
+
+  if (toInsert.length === 0) {
+    return NextResponse.json({ success: true, type: "phan_loai_hh", total: records.length, inserted: 0, skipped: records.length, errors: [] });
+  }
+
+  if (duplicateMode === "skip") {
+    for (let i = 0; i < toInsert.length; i += 50) {
+      const batch = toInsert.slice(i, i + 50);
+      const { error, data } = await supabase.from("phan_loai_hh").insert(batch).select();
+      if (error) { errors.push(`Batch ${i / 50 + 1}: ${error.message}`); skipped += batch.length; }
+      else { inserted += data?.length || batch.length; }
+    }
+  } else {
+    for (let i = 0; i < toInsert.length; i += 50) {
+      const batch = toInsert.slice(i, i + 50);
+      const { error, data } = await supabase.from("phan_loai_hh").upsert(batch, { onConflict: "ma_phan_loai", ignoreDuplicates: false }).select();
+      if (error) { errors.push(`Batch ${i / 50 + 1}: ${error.message}`); skipped += batch.length; }
+      else { inserted += data?.length || batch.length; }
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+    type: "phan_loai_hh",
     total: records.length,
     inserted,
     skipped,
