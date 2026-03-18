@@ -125,3 +125,25 @@ export async function POST(request: Request) {
     );
   }
 }
+
+// DELETE /api/wms/hang-hoa?action=delete_all — soft-delete all hang_hoa records
+export async function DELETE(request: Request) {
+  try {
+    const supabase = await createClient();
+    const { searchParams } = new URL(request.url);
+    const action = searchParams.get("action");
+
+    if (action === "delete_all") {
+      const { error } = await supabase
+        .from("hang_hoa")
+        .update({ is_deleted: true })
+        .eq("is_deleted", false);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ success: true, message: "Đã xóa tất cả hàng hóa" });
+    }
+
+    return NextResponse.json({ error: "Missing action parameter" }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
