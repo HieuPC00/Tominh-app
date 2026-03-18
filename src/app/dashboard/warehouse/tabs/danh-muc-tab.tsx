@@ -101,6 +101,8 @@ function ImportExcelButton({ type, onDone }: { type: "nha_cung_cap" | "hang_hoa"
 }
 
 // ==================== HÀNG HÓA ====================
+const PAGE_SIZE = 50;
+
 function HangHoaSubTab() {
   const [list, setList] = useState<HangHoa[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,6 +110,8 @@ function HangHoaSubTab() {
   const [showForm, setShowForm] = useState(false);
   const [dvtList, setDvtList] = useState<DonViTinh[]>([]);
   const [plList, setPlList] = useState<PhanLoaiHH[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   // Form
   const [fMa, setFMa] = useState("");
@@ -124,15 +128,20 @@ function HangHoaSubTab() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
   const fetchList = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
     if (search) params.set("search", search);
+    params.set("page", String(page));
+    params.set("limit", String(PAGE_SIZE));
     const res = await fetch(`/api/wms/hang-hoa?${params}`);
     const data = await res.json();
     setList(data?.data || (Array.isArray(data) ? data : []));
+    setTotal(data?.total ?? 0);
     setLoading(false);
-  }, [search]);
+  }, [search, page]);
 
   useEffect(() => {
     fetchList();
@@ -180,7 +189,7 @@ function HangHoaSubTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <input type="text" placeholder="Tìm mã, tên hàng hóa..." value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           className="w-60 rounded border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
         <div className="flex gap-2">
           <ImportExcelButton type="hang_hoa" onDone={fetchList} />
@@ -314,6 +323,48 @@ function HangHoaSubTab() {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {total > 0 && (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-gray-500">
+            Hiển thị {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} / {total.toLocaleString("vi-VN")} hàng hóa
+          </span>
+          <div className="flex gap-1">
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage(1)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-gray-700"
+            >
+              ««
+            </button>
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-gray-700"
+            >
+              «
+            </button>
+            <span className="px-3 py-1 text-xs font-medium">
+              Trang {page} / {totalPages}
+            </span>
+            <button
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-gray-700"
+            >
+              »
+            </button>
+            <button
+              disabled={page >= totalPages}
+              onClick={() => setPage(totalPages)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-gray-700"
+            >
+              »»
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -324,6 +375,8 @@ function NhaCungCapSubTab() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   const [fMa, setFMa] = useState("");
   const [fTen, setFTen] = useState("");
@@ -335,15 +388,20 @@ function NhaCungCapSubTab() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
   const fetchList = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
     if (search) params.set("search", search);
+    params.set("page", String(page));
+    params.set("limit", String(PAGE_SIZE));
     const res = await fetch(`/api/wms/nha-cung-cap?${params}`);
     const data = await res.json();
-    setList(Array.isArray(data) ? data : []);
+    setList(data?.data || (Array.isArray(data) ? data : []));
+    setTotal(data?.total ?? 0);
     setLoading(false);
-  }, [search]);
+  }, [search, page]);
 
   useEffect(() => { fetchList(); }, [fetchList]);
 
@@ -379,7 +437,7 @@ function NhaCungCapSubTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <input type="text" placeholder="Tìm mã, tên NCC, MST..." value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           className="w-60 rounded border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
         <div className="flex gap-2">
           <ImportExcelButton type="nha_cung_cap" onDone={fetchList} />
@@ -471,6 +529,48 @@ function NhaCungCapSubTab() {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {total > 0 && (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-gray-500">
+            Hiển thị {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} / {total.toLocaleString("vi-VN")} nhà cung cấp
+          </span>
+          <div className="flex gap-1">
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage(1)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-gray-700"
+            >
+              ««
+            </button>
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-gray-700"
+            >
+              «
+            </button>
+            <span className="px-3 py-1 text-xs font-medium">
+              Trang {page} / {totalPages}
+            </span>
+            <button
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-gray-700"
+            >
+              »
+            </button>
+            <button
+              disabled={page >= totalPages}
+              onClick={() => setPage(totalPages)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-gray-700"
+            >
+              »»
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
