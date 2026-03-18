@@ -53,12 +53,14 @@ async function importNhaCungCap(supabase: any, workbook: XLSX.WorkBook) {
     return NextResponse.json({ error: "Không tìm thấy header trong file" }, { status: 400 });
   }
 
+  // Cols: 0=STT, 1=Mã nhà cung cấp, 2=Tên nhà cung cấp, 3=Địa chỉ, 4=MST/CCCD, 5=SĐT
   const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r[1]); // col 1 = Mã NCC
   const records = dataRows.map((r) => ({
     ma_ncc: String(r[1] || "").trim(),
     ten_ncc: String(r[2] || "").trim(),
     dia_chi: r[3] ? String(r[3]).trim() : null,
     ma_so_thue: r[4] ? String(r[4]).trim() : null,
+    dien_thoai: r[5] ? String(r[5]).trim() : null,
   })).filter((r) => r.ma_ncc && r.ten_ncc);
 
   let inserted = 0;
