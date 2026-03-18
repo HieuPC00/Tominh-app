@@ -66,15 +66,22 @@ async function importNhaCungCap(supabase: any, workbook: XLSX.WorkBook, duplicat
     dien_thoai: r[5] ? String(r[5]).trim() : null,
   })).filter((r) => r.ma_ncc && r.ten_ncc);
 
-  // Check for duplicates in database
+  // Check for duplicates in database (batch .in() to avoid URL length limits)
   const maCodes = records.map((r) => r.ma_ncc);
-  const { data: existing } = await supabase
-    .from("nha_cung_cap")
-    .select("ma_ncc, ten_ncc")
-    .in("ma_ncc", maCodes);
+  const allExisting: { ma_ncc: string; ten_ncc: string }[] = [];
+  for (let i = 0; i < maCodes.length; i += 50) {
+    const chunk = maCodes.slice(i, i + 50);
+    const { data, error } = await supabase
+      .from("nha_cung_cap")
+      .select("ma_ncc, ten_ncc")
+      .in("ma_ncc", chunk);
+    if (!error && data) {
+      allExisting.push(...(data as { ma_ncc: string; ten_ncc: string }[]));
+    }
+  }
 
-  const existingSet = new Set((existing || []).map((e: { ma_ncc: string }) => e.ma_ncc));
-  const duplicates = (existing || []) as { ma_ncc: string; ten_ncc: string }[];
+  const existingSet = new Set(allExisting.map((e) => e.ma_ncc));
+  const duplicates = allExisting;
   const duplicateCount = duplicates.length;
 
   // Mode: check — just return duplicate info, don't insert
@@ -222,15 +229,22 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
     };
   }).filter((r) => r.ma_hang_hoa && r.ten);
 
-  // Check for duplicates
+  // Check for duplicates (batch .in() to avoid URL length limits)
   const maCodes = records.map((r) => r.ma_hang_hoa);
-  const { data: existing } = await supabase
-    .from("hang_hoa")
-    .select("ma_hang_hoa, ten")
-    .in("ma_hang_hoa", maCodes.slice(0, 1000));
+  const allExisting: { ma_hang_hoa: string; ten: string }[] = [];
+  for (let i = 0; i < maCodes.length; i += 50) {
+    const chunk = maCodes.slice(i, i + 50);
+    const { data, error } = await supabase
+      .from("hang_hoa")
+      .select("ma_hang_hoa, ten")
+      .in("ma_hang_hoa", chunk);
+    if (!error && data) {
+      allExisting.push(...(data as { ma_hang_hoa: string; ten: string }[]));
+    }
+  }
 
-  const existingSet = new Set((existing || []).map((e: { ma_hang_hoa: string }) => e.ma_hang_hoa));
-  const duplicates = (existing || []) as { ma_hang_hoa: string; ten: string }[];
+  const existingSet = new Set(allExisting.map((e) => e.ma_hang_hoa));
+  const duplicates = allExisting;
   const duplicateCount = duplicates.length;
 
   if (duplicateMode === "check" && duplicateCount > 0) {
