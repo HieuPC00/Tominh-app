@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     let query = supabase
       .from("hang_hoa")
       .select(
-        "*, don_vi_tinh(id, ma_dvt, ten_dvt), phan_loai_hh(id, ma_phan_loai, ten_phan_loai)",
+        "*, don_vi_tinh(id, ma_dvt, ten_dvt), phan_loai:phan_loai_hh(id, ma_phan_loai, ten_phan_loai)",
         { count: "exact" }
       )
       .eq("is_deleted", false)
@@ -110,7 +110,7 @@ export async function POST(request: Request) {
         hinh_anh: body.hinh_anh || null,
         created_by: body.created_by || null,
       })
-      .select("*, don_vi_tinh(id, ma_dvt, ten_dvt), phan_loai_hh(id, ma_phan_loai, ten_phan_loai)")
+      .select("*, don_vi_tinh(id, ma_dvt, ten_dvt), phan_loai:phan_loai_hh(id, ma_phan_loai, ten_phan_loai)")
       .single();
 
     if (error) {
