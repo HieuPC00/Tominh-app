@@ -111,6 +111,21 @@ async function importNhaCungCap(supabase: any, workbook: XLSX.WorkBook, duplicat
     }
   }
 
+  // Debug info for troubleshooting
+  const debugInfo = {
+    headerRow: headerRow.map((h, i) => `[${i}]=${h}`),
+    colMap,
+    hasMaCol,
+    hasTenCol,
+    sampleRecords: records.slice(0, 3).map((r) => ({
+      ma_ncc: r.ma_ncc,
+      ten_ncc: r.ten_ncc?.slice(0, 40),
+      dia_chi: r.dia_chi?.slice(0, 30),
+      mst: r.ma_so_thue,
+      sdt: r.dien_thoai,
+    })),
+  };
+
   // Check for duplicates: fetch all existing ma_ncc then compare in JS
   const importCodes = new Set(records.map((r) => r.ma_ncc));
   const { data: allNcc, error: queryErr } = await supabase
@@ -138,6 +153,7 @@ async function importNhaCungCap(supabase: any, workbook: XLSX.WorkBook, duplicat
       duplicate_count: duplicateCount,
       duplicates: duplicates.slice(0, 20).map((d) => `${d.ma_ncc} - ${d.ten_ncc}`),
       new_count: records.length - duplicateCount,
+      debug: debugInfo,
     });
   }
 
@@ -159,6 +175,7 @@ async function importNhaCungCap(supabase: any, workbook: XLSX.WorkBook, duplicat
       inserted: 0,
       skipped: records.length,
       errors: [],
+      debug: debugInfo,
     });
   }
 
@@ -205,6 +222,7 @@ async function importNhaCungCap(supabase: any, workbook: XLSX.WorkBook, duplicat
     skipped,
     overwritten: duplicateMode === "overwrite" ? duplicateCount : 0,
     errors,
+    debug: debugInfo,
   });
 }
 

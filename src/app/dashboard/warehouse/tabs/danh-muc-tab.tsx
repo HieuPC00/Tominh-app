@@ -153,6 +153,9 @@ function ImportExcelButton({ type, onDone }: { type: "nha_cung_cap" | "hang_hoa"
           {result.success
             ? `Thành công: ${result.inserted} mới${result.overwritten ? `, ${result.overwritten} cập nhật` : ""}${result.skipped ? `, ${result.skipped} bỏ qua` : ""} / ${result.total} dòng`
             : result.errors?.[0] || "Lỗi"}
+          {result.errors && result.errors.length > 0 && (
+            <span className="ml-1 text-red-500">({result.errors.join("; ")})</span>
+          )}
         </span>
       )}
 
@@ -486,6 +489,7 @@ function NhaCungCapSubTab() {
   const [showForm, setShowForm] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [deleting, setDeleting] = useState(false);
 
   const [fMa, setFMa] = useState("");
   const [fTen, setFTen] = useState("");
@@ -549,6 +553,21 @@ function NhaCungCapSubTab() {
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           className="w-60 rounded border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
         <div className="flex gap-2">
+          {total > 0 && (
+            <button
+              onClick={async () => {
+                if (!confirm(`Xóa tất cả ${total} NCC? Hành động này không thể hoàn tác!`)) return;
+                setDeleting(true);
+                await fetch("/api/wms/nha-cung-cap?action=delete_all", { method: "DELETE" });
+                setDeleting(false);
+                fetchList();
+              }}
+              disabled={deleting}
+              className="rounded border border-red-600 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950"
+            >
+              {deleting ? "Đang xóa..." : `Xóa tất cả (${total})`}
+            </button>
+          )}
           <ImportExcelButton type="nha_cung_cap" onDone={fetchList} />
           <button onClick={() => setShowForm(!showForm)}
             className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">

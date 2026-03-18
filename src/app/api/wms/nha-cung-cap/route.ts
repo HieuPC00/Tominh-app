@@ -57,3 +57,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+// DELETE /api/wms/nha-cung-cap?action=delete_all — delete all NCC records
+export async function DELETE(request: Request) {
+  try {
+    const supabase = await createClient();
+    const { searchParams } = new URL(request.url);
+    const action = searchParams.get("action");
+
+    if (action === "delete_all") {
+      const { error } = await supabase
+        .from("nha_cung_cap")
+        .delete()
+        .neq("id", "00000000-0000-0000-0000-000000000000"); // delete all rows
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ success: true, message: "Đã xóa tất cả NCC" });
+    }
+
+    return NextResponse.json({ error: "Missing action parameter" }, { status: 400 });
+  } catch {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
