@@ -243,6 +243,7 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
     if (rowText.some((t) =>
       t === "mã" || t.includes("mã hàng") || t.includes("tên hàng") ||
       t.includes("ma hang") || t.includes("ten hang") ||
+      t.includes("tính chất") || t.includes("đơn vị tính") ||
       (t.includes("đvt") && rowText.some((t2) => t2.includes("tên")))
     )) {
       headerIdx = i;
@@ -256,21 +257,21 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
 
   // Dynamically detect column positions from header row
   const headerRow = rows[headerIdx].map((cell) => String(cell || "").toLowerCase().trim());
-  const hhColMap = { ma: -1, ten: -1, qcDongGoi: -1, nhomVTHH: -1, dvt: -1, hsd: -1, nguonGoc: -1, gia: -1 };
+  const hhColMap = { ma: -1, ten: -1, tinhChat: -1, nhomVTHH: -1, dvt: -1, hsd: -1, nguonGoc: -1, gia: -1 };
 
   for (let c = 0; c < headerRow.length; c++) {
     const h = headerRow[c];
     if (h === "mã" || h.includes("mã hàng") || h.includes("ma hang") || h === "mã hh") {
       hhColMap.ma = c;
-    } else if (h.includes("tên") || h.includes("ten hang") || h === "tên hàng hóa") {
-      if (hhColMap.ten === -1) hhColMap.ten = c; // first "tên" match
-    } else if (h.includes("quy cách") || h.includes("đóng gói") || h.includes("qc")) {
-      hhColMap.qcDongGoi = c;
+    } else if (h === "tên" || h.includes("tên hàng") || h.includes("ten hang") || h === "tên hàng hóa") {
+      if (hhColMap.ten === -1) hhColMap.ten = c;
+    } else if (h.includes("tính chất") || h.includes("tinh chat") || h.includes("quy cách") || h.includes("đóng gói")) {
+      hhColMap.tinhChat = c;
     } else if (h.includes("nhóm") || h.includes("phân loại") || h.includes("vthh") || h.includes("loại")) {
       hhColMap.nhomVTHH = c;
-    } else if (h.includes("đvt") || h.includes("đơn vị") || h.includes("don vi")) {
+    } else if (h.includes("đvt") || h.includes("đơn vị tính") || h.includes("don vi")) {
       hhColMap.dvt = c;
-    } else if (h.includes("hạn sử dụng") || h.includes("hsd") || h.includes("han su dung")) {
+    } else if (h.includes("thời hạn") || h.includes("hạn sử dụng") || h.includes("hsd") || h.includes("bảo hành") || h.includes("han su dung")) {
       hhColMap.hsd = c;
     } else if (h.includes("nguồn gốc") || h.includes("xuất xứ") || h.includes("nguon goc")) {
       hhColMap.nguonGoc = c;
@@ -308,12 +309,14 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
         if (hsdText.includes("tháng")) hsdNgay = num * 30;
         else if (hsdText.includes("ngày")) hsdNgay = num;
         else if (hsdText.includes("năm")) hsdNgay = num * 365;
+        else hsdNgay = num; // default to days
       }
     }
 
     return {
       ma_hang_hoa: hhColMap.ma !== -1 ? String(r[hhColMap.ma] || "").trim() : "",
       ten: hhColMap.ten !== -1 ? String(r[hhColMap.ten] || "").trim() : "",
+      quy_cach: hhColMap.tinhChat !== -1 && r[hhColMap.tinhChat] ? String(r[hhColMap.tinhChat]).trim() : null,
       phan_loai_id: plMap.get(nhomVTHH.toLowerCase()) || null,
       dvt_id: dvtMap.get(dvtText.toLowerCase()) || null,
       nguon_goc: hhColMap.nguonGoc !== -1 && r[hhColMap.nguonGoc] ? String(r[hhColMap.nguonGoc]).trim() : null,

@@ -401,12 +401,12 @@ function HangHoaSubTab() {
             <tr>
               <th className="px-3 py-2 text-left font-medium text-gray-500">Mã</th>
               <th className="px-3 py-2 text-left font-medium text-gray-500">Tên</th>
-              <th className="px-3 py-2 text-left font-medium text-gray-500">ĐVT</th>
+              <th className="px-3 py-2 text-left font-medium text-gray-500">Tính chất</th>
               <th className="px-3 py-2 text-left font-medium text-gray-500">Nhóm VTHH</th>
+              <th className="px-3 py-2 text-left font-medium text-gray-500">Đơn vị tính chính</th>
+              <th className="px-3 py-2 text-left font-medium text-gray-500">Thời hạn bảo hành</th>
               <th className="px-3 py-2 text-left font-medium text-gray-500">Nguồn gốc</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-500">Đơn giá mua</th>
-              <th className="px-3 py-2 text-right font-medium text-gray-500">Tồn</th>
-              <th className="px-3 py-2 text-center font-medium text-gray-500">TT</th>
+              <th className="px-3 py-2 text-right font-medium text-gray-500">Đơn giá mua gần nhất</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
@@ -419,16 +419,12 @@ function HangHoaSubTab() {
                 <tr key={hh.id} className="hover:bg-gray-50 dark:hover:bg-gray-900">
                   <td className="px-3 py-2 font-mono text-xs">{hh.ma_hang_hoa}</td>
                   <td className="max-w-[200px] truncate px-3 py-2">{hh.ten}</td>
-                  <td className="px-3 py-2 text-gray-500">{hh.don_vi_tinh?.ten_dvt || "—"}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500">{hh.quy_cach || "—"}</td>
                   <td className="px-3 py-2 text-gray-500">{hh.phan_loai?.ten_phan_loai || "—"}</td>
+                  <td className="px-3 py-2 text-gray-500">{hh.don_vi_tinh?.ten_dvt || "—"}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500">{hh.han_su_dung_ngay ? `${hh.han_su_dung_ngay} ngày` : "—"}</td>
                   <td className="px-3 py-2 text-xs text-gray-500">{hh.nguon_goc || "—"}</td>
                   <td className="px-3 py-2 text-right">{Number(hh.gia_binh_quan) > 0 ? Number(hh.gia_binh_quan).toLocaleString("vi-VN") : "—"}</td>
-                  <td className="px-3 py-2 text-right">{Number(hh.so_luong_ton).toLocaleString("vi-VN")}</td>
-                  <td className="px-3 py-2 text-center">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      hh.trang_thai === "hoat_dong" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
-                    }`}>{hh.trang_thai === "hoat_dong" ? "HĐ" : hh.trang_thai}</span>
-                  </td>
                 </tr>
               ))
             )}
