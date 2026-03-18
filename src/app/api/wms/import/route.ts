@@ -66,22 +66,21 @@ async function importNhaCungCap(supabase: any, workbook: XLSX.WorkBook, duplicat
     dien_thoai: r[5] ? String(r[5]).trim() : null,
   })).filter((r) => r.ma_ncc && r.ten_ncc);
 
-  // Check for duplicates in database (batch .in() to avoid URL length limits)
-  const maCodes = records.map((r) => r.ma_ncc);
-  const allExisting: { ma_ncc: string; ten_ncc: string }[] = [];
-  for (let i = 0; i < maCodes.length; i += 50) {
-    const chunk = maCodes.slice(i, i + 50);
-    const { data, error } = await supabase
-      .from("nha_cung_cap")
-      .select("ma_ncc, ten_ncc")
-      .in("ma_ncc", chunk);
-    if (!error && data) {
-      allExisting.push(...(data as { ma_ncc: string; ten_ncc: string }[]));
-    }
+  // Check for duplicates: fetch all existing ma_ncc then compare in JS
+  const importCodes = new Set(records.map((r) => r.ma_ncc));
+  const { data: allNcc, error: queryErr } = await supabase
+    .from("nha_cung_cap")
+    .select("ma_ncc, ten_ncc")
+    .order("ma_ncc")
+    .limit(5000);
+
+  if (queryErr) {
+    console.error("Duplicate check query error:", queryErr);
   }
 
-  const existingSet = new Set(allExisting.map((e) => e.ma_ncc));
-  const duplicates = allExisting;
+  const duplicates = (allNcc || [])
+    .filter((row: { ma_ncc: string }) => importCodes.has(row.ma_ncc)) as { ma_ncc: string; ten_ncc: string }[];
+  const existingSet = new Set(duplicates.map((e) => e.ma_ncc));
   const duplicateCount = duplicates.length;
 
   // Mode: check — just return duplicate info, don't insert
@@ -229,22 +228,26 @@ async function importHangHoa(supabase: any, workbook: XLSX.WorkBook, duplicateMo
     };
   }).filter((r) => r.ma_hang_hoa && r.ten);
 
-  // Check for duplicates (batch .in() to avoid URL length limits)
-  const maCodes = records.map((r) => r.ma_hang_hoa);
-  const allExisting: { ma_hang_hoa: string; ten: string }[] = [];
-  for (let i = 0; i < maCodes.length; i += 50) {
-    const chunk = maCodes.slice(i, i + 50);
-    const { data, error } = await supabase
+  // Check for duplicates: fetch all existing ma_hang_hoa then compare in JS
+  const importCodes = new Set(records.map((r) => r.ma_hang_hoa));
+  const allHH: { ma_hang_hoa: string; ten: string }[] = [];
+  // Fetch in pages of 1000 (hang_hoa can have thousands of records)
+  let page = 0;
+  while (true) {
+    const { data: batch, error: qErr } = await supabase
       .from("hang_hoa")
       .select("ma_hang_hoa, ten")
-      .in("ma_hang_hoa", chunk);
-    if (!error && data) {
-      allExisting.push(...(data as { ma_hang_hoa: string; ten: string }[]));
-    }
+      .eq("is_deleted", false)
+      .range(page * 1000, (page + 1) * 1000 - 1);
+    if (qErr) { console.error("Duplicate check error:", qErr); break; }
+    if (!batch || batch.length === 0) break;
+    allHH.push(...(batch as { ma_hang_hoa: string; ten: string }[]));
+    if (batch.length < 1000) break;
+    page++;
   }
 
-  const existingSet = new Set(allExisting.map((e) => e.ma_hang_hoa));
-  const duplicates = allExisting;
+  const duplicates = allHH.filter((row) => importCodes.has(row.ma_hang_hoa));
+  const existingSet = new Set(duplicates.map((e) => e.ma_hang_hoa));
   const duplicateCount = duplicates.length;
 
   if (duplicateMode === "check" && duplicateCount > 0) {
