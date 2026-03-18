@@ -262,11 +262,11 @@ CREATE TABLE huy_hang (
 -- Nhà cung cấp
 CREATE TABLE nha_cung_cap (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  ma_ncc VARCHAR(30) NOT NULL UNIQUE,
+  ma_ncc VARCHAR(50) NOT NULL UNIQUE,
   ten_ncc VARCHAR(255) NOT NULL,
   dia_chi TEXT,
-  ma_so_thue VARCHAR(30),
-  dien_thoai VARCHAR(20),
+  ma_so_thue VARCHAR(50),
+  dien_thoai VARCHAR(30),
   email VARCHAR(100),
   nguoi_lien_he VARCHAR(100),
   ghi_chu TEXT,

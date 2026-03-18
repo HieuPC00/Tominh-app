@@ -59,11 +59,11 @@ async function importNhaCungCap(supabase: any, workbook: XLSX.WorkBook, duplicat
   // Cols: 0=STT, 1=Mã nhà cung cấp, 2=Tên nhà cung cấp, 3=Địa chỉ, 4=MST/CCCD, 5=SĐT
   const dataRows = rows.slice(headerIdx + 1).filter((r) => r && r[1]);
   const records = dataRows.map((r) => ({
-    ma_ncc: String(r[1] || "").trim(),
-    ten_ncc: String(r[2] || "").trim(),
+    ma_ncc: String(r[1] || "").trim().slice(0, 30),
+    ten_ncc: String(r[2] || "").trim().slice(0, 255),
     dia_chi: r[3] ? String(r[3]).trim() : null,
-    ma_so_thue: r[4] ? String(r[4]).trim() : null,
-    dien_thoai: r[5] ? String(r[5]).trim() : null,
+    ma_so_thue: r[4] ? String(r[4]).trim().slice(0, 30) : null,
+    dien_thoai: r[5] ? String(r[5]).trim().slice(0, 20) : null,
   })).filter((r) => r.ma_ncc && r.ten_ncc);
 
   // Check for duplicates: fetch all existing ma_ncc then compare in JS
