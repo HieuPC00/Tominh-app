@@ -201,6 +201,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // DEBUG: show what OCR read vs what DB has for troubleshooting
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const debug_ocr_items = rawItems.map((i: any) => {
+      const ocrName = (i.ten || "").trim();
+      const match = findBestProduct(ocrName, allProducts);
+      return {
+        ocr: ocrName,
+        best_match: match ? { name: match.product.ten, score: Math.round(match.score * 100) } : null,
+      };
+    });
+
+    const debug_sample_products = allProducts.slice(0, 10).map(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (p: any) => p.ten
+    );
+
     return NextResponse.json({
       supplier: {
         matched_id: matchedNcc?.id || null,
@@ -212,6 +228,9 @@ export async function POST(request: NextRequest) {
       items,
       total_ocr_items: rawItems.length,
       total_matched: items.length,
+      total_products_in_db: allProducts.length,
+      debug_ocr_items,
+      debug_sample_products,
       invoice_info: {
         so_hoa_don: raw.so_hd || null,
         ngay_hoa_don: raw.ngay || null,

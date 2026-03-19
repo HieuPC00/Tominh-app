@@ -305,8 +305,14 @@ export default function CongNoTab() {
           `Doc duoc ${totalOcr} dong, khop ${totalMatched} san pham trong danh muc. ${nccInfo}`
         );
       } else {
+        // Debug: show what OCR read and what DB has
+        const dbCount = result.total_products_in_db || 0;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const debugLines = (result.debug_ocr_items || []).slice(0, 5).map((d: any) =>
+          `"${d.ocr}" → ${d.best_match ? `${d.best_match.name} (${d.best_match.score}%)` : "X"}`
+        ).join(" | ");
         setOcrError(
-          `Doc duoc ${totalOcr} dong nhung khong khop san pham nao trong danh muc. Thu anh ro hon hoac kiem tra danh muc hang hoa.`
+          `Doc ${totalOcr} dong, khop 0/${dbCount} SP. Debug: ${debugLines}`
         );
       }
     } catch (err) {
