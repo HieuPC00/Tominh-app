@@ -144,20 +144,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Khong doc duoc JSON", raw: text.substring(0, 500) }, { status: 500 });
     }
 
-    // 3. Load products + NCC from DB
+    // 3. Load ALL products + NCC from DB (pagination to bypass 1000 row limit)
     const supabase = await createClient();
-    const [nccRes, hhRes] = await Promise.all([
-      supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc, ma_so_thue").eq("trang_thai", "hoat_dong").limit(2000),
-      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh(ten_dvt), gia_binh_quan").or("is_deleted.eq.false,is_deleted.is.null").limit(5000),
-    ]);
-
-    if (hhRes.error) {
-      return NextResponse.json({ error: `DB error: ${hhRes.error.message}` }, { status: 500 });
-    }
-
+    const nccRes = await supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc, ma_so_thue").eq("trang_thai", "hoat_dong").limit(2000);
     const nccList = nccRes.data || [];
+
+    // Load ALL products with pagination (Supabase default max = 1000)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const allProducts = (hhRes.data || []) as any[];
+    const allProducts: any[] = [];
+    const PAGE_SIZE = 1000;
+    let page = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from("hang_hoa")
+        .select("id, ma_hang_hoa, ten, don_vi_tinh(ten_dvt), gia_binh_quan")
+        .or("is_deleted.eq.false,is_deleted.is.null")
+        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+      if (error) {
+        return NextResponse.json({ error: `DB error: ${error.message}` }, { status: 500 });
+      }
+      if (!data || data.length === 0) break;
+      allProducts.push(...data);
+      if (data.length < PAGE_SIZE) break; // last page
+      page++;
+    }
 
     // 4. Match NCC
     const ocrNcc = (raw.ncc || "").trim();
