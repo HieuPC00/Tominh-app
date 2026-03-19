@@ -123,7 +123,7 @@ export async function POST(request: Request) {
         subtotal,
         vat_amt,
         tong_tien,
-        trang_thai: "nhap",
+        trang_thai: "cho_xac_nhan",
       })
       .select()
       .single();
