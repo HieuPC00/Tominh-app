@@ -297,23 +297,21 @@ export default function CongNoTab() {
           nccSelected: !!result.supplier?.matched_id,
         }));
 
+      // LUON hien debug info de kiem tra
+      const dbCount = result.total_products_in_db || 0;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const debugLines = (result.debug_ocr_items || []).slice(0, 5).map((d: any) =>
+        `"${d.ocr}" → ${d.matched ? `${d.matched.name} (${d.matched.score}%)` : "X"}`
+      ).join(" | ");
+
       if (newItems.length > 0) {
         setFormItems(newItems);
-        const nccInfo = result.supplier?.matched_id
-          ? `NCC: ${result.supplier.matched_ten_ncc}`
-          : `NCC: "${result.supplier?.ocr_ten_ncc || "?"}" (chua khop — chon thu cong)`;
         setOcrError(
-          `Doc duoc ${totalOcr} dong, khop ${totalMatched} san pham trong danh muc. ${nccInfo}`
+          `Doc ${totalOcr} dong, khop ${totalMatched}/${dbCount} SP. ${debugLines}`
         );
       } else {
-        // Debug: show what OCR read and what DB has
-        const dbCount = result.total_products_in_db || 0;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const debugLines = (result.debug_ocr_items || []).slice(0, 5).map((d: any) =>
-          `"${d.ocr}" → ${d.best_match ? `${d.best_match.name} (${d.best_match.score}%)` : "X"}`
-        ).join(" | ");
         setOcrError(
-          `Doc ${totalOcr} dong, khop 0/${dbCount} SP. Debug: ${debugLines}`
+          `Doc ${totalOcr} dong, khop 0/${dbCount} SP. ${debugLines}`
         );
       }
     } catch (err) {
