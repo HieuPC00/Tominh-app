@@ -27,97 +27,77 @@ Tra ve JSON (KHONG co text nao khac):
   ]
 }`;
 
-// Normalize for comparison ONLY (not for search)
+// Strip diacritics for comparison — both sides normalized = fair comparison
 function norm(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[đĐ]/g, "d").replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
 }
 
-function sim(a: string, b: string): number {
-  const na = norm(a), nb = norm(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 1;
-  if (na.includes(nb) || nb.includes(na)) return 0.85;
-  const wa = na.split(" ").filter(w => w.length >= 2);
-  const wb = nb.split(" ").filter(w => w.length >= 2);
-  if (!wa.length || !wb.length) return 0;
+// Multi-strategy similarity: very lenient for approximate matching
+function sim(ocrText: string, dbText: string): number {
+  const a = norm(ocrText), b = norm(dbText);
+  if (!a || !b) return 0;
+
+  // Exact match
+  if (a === b) return 1.0;
+
+  // One contains the other
+  if (a.includes(b) || b.includes(a)) return 0.9;
+
+  // Word-level matching
+  const wordsA = a.split(" ").filter(w => w.length >= 2);
+  const wordsB = b.split(" ").filter(w => w.length >= 2);
+  if (!wordsA.length || !wordsB.length) return 0;
+
+  // Count how many words from OCR appear in DB name (or vice versa)
   let hits = 0;
-  for (const a of wa) {
-    for (const b of wb) {
-      if (a === b || a.includes(b) || b.includes(a)) { hits++; break; }
+  for (const wa of wordsA) {
+    for (const wb of wordsB) {
+      // Exact word match
+      if (wa === wb) { hits += 1.0; break; }
+      // Partial word match (one contains the other, e.g. "banh" matches "banh")
+      if (wa.length >= 3 && wb.length >= 3 && (wa.includes(wb) || wb.includes(wa))) {
+        hits += 0.8; break;
+      }
+      // First 3+ chars match (typo tolerance: "ban" vs "bap")
+      if (wa.length >= 4 && wb.length >= 4 && wa.substring(0, 3) === wb.substring(0, 3)) {
+        hits += 0.5; break;
+      }
     }
   }
-  return hits / Math.max(wa.length, wb.length);
+
+  // Score = hits / total words (use the smaller set for leniency)
+  const divisor = Math.min(wordsA.length, wordsB.length);
+  return divisor > 0 ? hits / divisor : 0;
 }
 
-// Extract Vietnamese keywords (WITH diacritics) for Supabase ilike
-function extractVietnameseKeywords(text: string): string[] {
-  const words = text.trim().split(/\s+/).filter(w => w.length >= 2);
-  return [...new Set(words)];
-}
-
-// Search product in Supabase and pick best match
-async function searchProduct(
-  supabase: ReturnType<Awaited<ReturnType<typeof createClient>>["from"]> extends never ? never : Awaited<ReturnType<typeof createClient>>,
-  ocrName: string
+// Find best matching product from full list — LENIENT threshold
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<any | null> {
-  const keywords = extractVietnameseKeywords(ocrName);
+function findBestProduct(ocrName: string, products: any[]): { product: any; score: number } | null {
+  if (!ocrName || ocrName.trim().length < 2) return null;
+
+  let bestScore = 0;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const candidates = new Map<string, any>();
+  let bestProduct: any = null;
 
-  // Strategy 1: Search with each ORIGINAL Vietnamese keyword (with diacritics)
-  for (const kw of keywords) {
-    if (kw.length < 2) continue;
-    try {
-      const { data } = await supabase
-        .from("hang_hoa")
-        .select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan")
-        .eq("is_deleted", false)
-        .or(`ten.ilike.%${kw}%,ma_hang_hoa.ilike.%${kw}%`)
-        .limit(15);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (data) data.forEach((h: any) => candidates.set(h.id, h));
-    } catch { /* ignore individual search errors */ }
+  for (const p of products) {
+    const score = sim(ocrName, p.ten);
+    if (score > bestScore) {
+      bestScore = score;
+      bestProduct = p;
+    }
+    // Also try matching against ma_hang_hoa
+    if (p.ma_hang_hoa) {
+      const codeScore = sim(ocrName, p.ma_hang_hoa);
+      if (codeScore > bestScore) {
+        bestScore = codeScore;
+        bestProduct = p;
+      }
+    }
   }
 
-  // Strategy 2: Search with full OCR name
-  try {
-    const { data } = await supabase
-      .from("hang_hoa")
-      .select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan")
-      .eq("is_deleted", false)
-      .ilike("ten", `%${ocrName}%`)
-      .limit(10);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (data) data.forEach((h: any) => candidates.set(h.id, h));
-  } catch { /* ignore */ }
-
-  // Strategy 3: Search with FIRST 2-3 keywords combined
-  if (keywords.length >= 2) {
-    const combo = keywords.slice(0, 3).join(" ");
-    try {
-      const { data } = await supabase
-        .from("hang_hoa")
-        .select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan")
-        .eq("is_deleted", false)
-        .ilike("ten", `%${combo}%`)
-        .limit(10);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (data) data.forEach((h: any) => candidates.set(h.id, h));
-    } catch { /* ignore */ }
-  }
-
-  if (candidates.size === 0) return null;
-
-  // Pick best match by similarity score — require >= 0.3
-  let bestScore = 0, bestProduct = null;
-  for (const hh of candidates.values()) {
-    const s = sim(ocrName, hh.ten);
-    if (s > bestScore) { bestScore = s; bestProduct = hh; }
-  }
-
-  return bestScore >= 0.3 ? bestProduct : null;
+  // LENIENT: accept any match >= 0.2 (even 1 word partially matching)
+  return bestScore >= 0.2 ? { product: bestProduct, score: bestScore } : null;
 }
 
 export async function POST(request: NextRequest) {
@@ -169,31 +149,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Khong doc duoc JSON", raw: text.substring(0, 500) }, { status: 500 });
     }
 
+    // 3. Load ALL products + NCC from DB for matching
     const supabase = await createClient();
+    const [nccRes, hhRes] = await Promise.all([
+      supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc, ma_so_thue").eq("trang_thai", "hoat_dong").limit(2000),
+      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan").eq("is_deleted", false).limit(5000),
+    ]);
+    const nccList = nccRes.data || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allProducts = (hhRes.data || []) as any[];
 
-    // 3. Match NCC
+    // 4. Match NCC
     const ocrNcc = (raw.ncc || "").trim();
     const ocrMst = (raw.mst || "").trim();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let matchedNcc: any = null;
 
     if (ocrMst) {
-      const { data } = await supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc").eq("trang_thai", "hoat_dong").eq("ma_so_thue", ocrMst).limit(1);
-      if (data?.length) matchedNcc = data[0];
+      matchedNcc = nccList.find(n => n.ma_so_thue && norm(n.ma_so_thue) === norm(ocrMst));
     }
     if (!matchedNcc && ocrNcc) {
-      const keywords = extractVietnameseKeywords(ocrNcc);
-      for (const kw of keywords) {
-        if (matchedNcc) break;
-        const { data } = await supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc").eq("trang_thai", "hoat_dong").or(`ten_ncc.ilike.%${kw}%,ma_ncc.ilike.%${kw}%`).limit(5);
-        if (data?.length) {
-          let best = 0;
-          for (const n of data) { const s = sim(ocrNcc, n.ten_ncc); if (s > best) { best = s; matchedNcc = n; } }
-        }
-      }
+      const result = findBestProduct(ocrNcc, nccList.map(n => ({ ...n, ten: n.ten_ncc })));
+      if (result) matchedNcc = nccList.find(n => n.id === result.product.id);
     }
 
-    // 4. Match products — ONLY keep items that match a product in DB
+    // 5. Match each OCR item against ALL products — LENIENT matching
     const rawItems = (raw.items || []).filter(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (i: any) => (i.ten || "").trim().length >= 2
@@ -202,20 +182,21 @@ export async function POST(request: NextRequest) {
     const items = [];
     for (const i of rawItems) {
       const ocrName = (i.ten || "").trim();
-      const matched = await searchProduct(supabase, ocrName);
+      const match = findBestProduct(ocrName, allProducts);
 
-      // CHI GIU LAI NEU MATCH DUOC SAN PHAM TRONG DB
-      if (matched) {
+      if (match) {
+        const p = match.product;
         items.push({
-          matched_hang_hoa_id: matched.id,
-          matched_ten: matched.ten,                           // Ten tu DB (chinh xac)
-          matched_dvt: matched.don_vi_tinh?.ten_dvt || null,  // DVT tu DB
-          matched_gia: matched.gia_binh_quan || 0,            // Gia tu DB
-          ocr_ten_hang_hoa: ocrName,                          // Ten OCR (de tham khao)
-          don_vi_tinh: matched.don_vi_tinh?.ten_dvt || "",    // DVT tu DB
-          so_luong: Math.max(0, Number(i.sl) || 0),           // SL tu OCR
-          don_gia: Number(i.gia) > 0 ? Number(i.gia) : (matched.gia_binh_quan || 0), // Gia tu OCR, fallback DB
+          matched_hang_hoa_id: p.id,
+          matched_ten: p.ten,
+          matched_dvt: p.don_vi_tinh?.ten_dvt || null,
+          matched_gia: p.gia_binh_quan || 0,
+          ocr_ten_hang_hoa: ocrName,
+          don_vi_tinh: p.don_vi_tinh?.ten_dvt || "",
+          so_luong: Math.max(0, Number(i.sl) || 0),
+          don_gia: Number(i.gia) > 0 ? Number(i.gia) : (p.gia_binh_quan || 0),
           vat_pct: Math.max(0, Number(i.vat) || 0),
+          match_score: Math.round(match.score * 100),
         });
       }
     }
