@@ -14,6 +14,7 @@ QUY TAC:
 - KHONG lay dong tieu de, tong cong, dong trong, ghi chu.
 - Don gia la gia 1 don vi (KHONG phai thanh tien).
 - Neu khong doc ro so luong/don gia, de = 0.
+- Giu nguyen tieng Viet co dau.
 
 Tra ve JSON (KHONG co text nao khac):
 {
@@ -22,24 +23,16 @@ Tra ve JSON (KHONG co text nao khac):
   "so_hd": "so hoa don hoac null",
   "ngay": "YYYY-MM-DD hoac null",
   "items": [
-    {"ten": "ten san pham", "dvt": "kg", "sl": 10, "gia": 50000, "vat": 0}
+    {"ten": "ten san pham tieng Viet co dau", "dvt": "kg", "sl": 10, "gia": 50000, "vat": 0}
   ]
 }`;
 
+// Normalize for comparison ONLY (not for search)
 function norm(s: string): string {
-  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[đĐ]/g, "d").replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[đĐ]/g, "d").replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
 }
 
-// Extract keywords from OCR text for Supabase ilike search
-function extractKeywords(text: string): string[] {
-  const n = norm(text);
-  // Get words with length >= 2, take the most meaningful ones
-  const words = n.split(" ").filter(w => w.length >= 2);
-  // Return unique keywords (max 4 most important)
-  return [...new Set(words)].slice(0, 4);
-}
-
-// Similarity score for ranking Supabase results
 function sim(a: string, b: string): number {
   const na = norm(a), nb = norm(b);
   if (!na || !nb) return 0;
@@ -57,6 +50,76 @@ function sim(a: string, b: string): number {
   return hits / Math.max(wa.length, wb.length);
 }
 
+// Extract Vietnamese keywords (WITH diacritics) for Supabase ilike
+function extractVietnameseKeywords(text: string): string[] {
+  const words = text.trim().split(/\s+/).filter(w => w.length >= 2);
+  return [...new Set(words)];
+}
+
+// Search product in Supabase and pick best match
+async function searchProduct(
+  supabase: ReturnType<Awaited<ReturnType<typeof createClient>>["from"]> extends never ? never : Awaited<ReturnType<typeof createClient>>,
+  ocrName: string
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any | null> {
+  const keywords = extractVietnameseKeywords(ocrName);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const candidates = new Map<string, any>();
+
+  // Strategy 1: Search with each ORIGINAL Vietnamese keyword (with diacritics)
+  for (const kw of keywords) {
+    if (kw.length < 2) continue;
+    try {
+      const { data } = await supabase
+        .from("hang_hoa")
+        .select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan")
+        .eq("is_deleted", false)
+        .or(`ten.ilike.%${kw}%,ma_hang_hoa.ilike.%${kw}%`)
+        .limit(15);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (data) data.forEach((h: any) => candidates.set(h.id, h));
+    } catch { /* ignore individual search errors */ }
+  }
+
+  // Strategy 2: Search with full OCR name
+  try {
+    const { data } = await supabase
+      .from("hang_hoa")
+      .select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan")
+      .eq("is_deleted", false)
+      .ilike("ten", `%${ocrName}%`)
+      .limit(10);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (data) data.forEach((h: any) => candidates.set(h.id, h));
+  } catch { /* ignore */ }
+
+  // Strategy 3: Search with FIRST 2-3 keywords combined
+  if (keywords.length >= 2) {
+    const combo = keywords.slice(0, 3).join(" ");
+    try {
+      const { data } = await supabase
+        .from("hang_hoa")
+        .select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan")
+        .eq("is_deleted", false)
+        .ilike("ten", `%${combo}%`)
+        .limit(10);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (data) data.forEach((h: any) => candidates.set(h.id, h));
+    } catch { /* ignore */ }
+  }
+
+  if (candidates.size === 0) return null;
+
+  // Pick best match by similarity score — require >= 0.3
+  let bestScore = 0, bestProduct = null;
+  for (const hh of candidates.values()) {
+    const s = sim(ocrName, hh.ten);
+    if (s > bestScore) { bestScore = s; bestProduct = hh; }
+  }
+
+  return bestScore >= 0.3 ? bestProduct : null;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.GROQ_API_KEY;
@@ -70,7 +133,7 @@ export async function POST(request: NextRequest) {
 
     const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
 
-    // 1. Call Groq Vision — extract raw data from image
+    // 1. Groq Vision — extract text from image
     const groq = new Groq({ apiKey });
     let text: string | undefined;
     try {
@@ -88,8 +151,7 @@ export async function POST(request: NextRequest) {
       });
       text = r.choices?.[0]?.message?.content || undefined;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: `Loi Groq: ${msg}` }, { status: 500 });
+      return NextResponse.json({ error: `Loi Groq: ${err instanceof Error ? err.message : err}` }, { status: 500 });
     }
 
     if (!text) return NextResponse.json({ error: "AI khong tra ve ket qua" }, { status: 500 });
@@ -107,115 +169,55 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Khong doc duoc JSON", raw: text.substring(0, 500) }, { status: 500 });
     }
 
-    // 3. Init Supabase
     const supabase = await createClient();
 
-    // 4. Match NCC — search in Supabase (same as autocomplete)
+    // 3. Match NCC
     const ocrNcc = (raw.ncc || "").trim();
     const ocrMst = (raw.mst || "").trim();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let matchedNcc: any = null;
 
     if (ocrMst) {
-      // Exact MST match
-      const { data } = await supabase
-        .from("nha_cung_cap")
-        .select("id, ma_ncc, ten_ncc, ma_so_thue")
-        .eq("trang_thai", "hoat_dong")
-        .eq("ma_so_thue", ocrMst)
-        .limit(1);
+      const { data } = await supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc").eq("trang_thai", "hoat_dong").eq("ma_so_thue", ocrMst).limit(1);
       if (data?.length) matchedNcc = data[0];
     }
-
     if (!matchedNcc && ocrNcc) {
-      // Supabase ilike search for NCC name
-      const keywords = extractKeywords(ocrNcc);
+      const keywords = extractVietnameseKeywords(ocrNcc);
       for (const kw of keywords) {
         if (matchedNcc) break;
-        const { data } = await supabase
-          .from("nha_cung_cap")
-          .select("id, ma_ncc, ten_ncc, ma_so_thue")
-          .eq("trang_thai", "hoat_dong")
-          .or(`ten_ncc.ilike.%${kw}%,ma_ncc.ilike.%${kw}%`)
-          .limit(5);
+        const { data } = await supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc").eq("trang_thai", "hoat_dong").or(`ten_ncc.ilike.%${kw}%,ma_ncc.ilike.%${kw}%`).limit(5);
         if (data?.length) {
-          // Pick best match by similarity score
-          let bestScore = 0;
-          for (const n of data) {
-            const s = sim(ocrNcc, n.ten_ncc);
-            if (s > bestScore) { bestScore = s; matchedNcc = n; }
-          }
+          let best = 0;
+          for (const n of data) { const s = sim(ocrNcc, n.ten_ncc); if (s > best) { best = s; matchedNcc = n; } }
         }
       }
     }
 
-    // 5. Match each product — Supabase ilike search (same method as ProductAutocomplete)
+    // 4. Match products — ONLY keep items that match a product in DB
     const rawItems = (raw.items || []).filter(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (i: any) => (i.ten || "").trim().length >= 3
+      (i: any) => (i.ten || "").trim().length >= 2
     );
 
     const items = [];
     for (const i of rawItems) {
       const ocrName = (i.ten || "").trim();
-      const keywords = extractKeywords(ocrName);
+      const matched = await searchProduct(supabase, ocrName);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let bestProduct: any = null;
-      let bestScore = 0;
-
-      // Try each keyword as ilike search (same as autocomplete API)
-      for (const kw of keywords) {
-        if (kw.length < 2) continue;
-        const { data } = await supabase
-          .from("hang_hoa")
-          .select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan")
-          .eq("is_deleted", false)
-          .or(`ma_hang_hoa.ilike.%${kw}%,ten.ilike.%${kw}%`)
-          .limit(10);
-
-        if (data?.length) {
-          for (const hh of data) {
-            const s = sim(ocrName, hh.ten);
-            if (s > bestScore) {
-              bestScore = s;
-              bestProduct = hh;
-            }
-          }
-        }
+      // CHI GIU LAI NEU MATCH DUOC SAN PHAM TRONG DB
+      if (matched) {
+        items.push({
+          matched_hang_hoa_id: matched.id,
+          matched_ten: matched.ten,                           // Ten tu DB (chinh xac)
+          matched_dvt: matched.don_vi_tinh?.ten_dvt || null,  // DVT tu DB
+          matched_gia: matched.gia_binh_quan || 0,            // Gia tu DB
+          ocr_ten_hang_hoa: ocrName,                          // Ten OCR (de tham khao)
+          don_vi_tinh: matched.don_vi_tinh?.ten_dvt || "",    // DVT tu DB
+          so_luong: Math.max(0, Number(i.sl) || 0),           // SL tu OCR
+          don_gia: Number(i.gia) > 0 ? Number(i.gia) : (matched.gia_binh_quan || 0), // Gia tu OCR, fallback DB
+          vat_pct: Math.max(0, Number(i.vat) || 0),
+        });
       }
-
-      // Also try full OCR name as search
-      if (!bestProduct || bestScore < 0.5) {
-        const { data } = await supabase
-          .from("hang_hoa")
-          .select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan")
-          .eq("is_deleted", false)
-          .or(`ten.ilike.%${ocrName}%,ma_hang_hoa.ilike.%${ocrName}%`)
-          .limit(5);
-
-        if (data?.length) {
-          for (const hh of data) {
-            const s = sim(ocrName, hh.ten);
-            if (s > bestScore) {
-              bestScore = s;
-              bestProduct = hh;
-            }
-          }
-        }
-      }
-
-      items.push({
-        matched_hang_hoa_id: bestProduct?.id || null,
-        matched_ten: bestProduct?.ten || null,
-        matched_dvt: bestProduct?.don_vi_tinh?.ten_dvt || null,
-        matched_gia: bestProduct?.gia_binh_quan || null,
-        ocr_ten_hang_hoa: ocrName,
-        don_vi_tinh: i.dvt || "",
-        so_luong: Math.max(0, Number(i.sl) || 0),
-        don_gia: Math.max(0, Number(i.gia) || 0),
-        vat_pct: Math.max(0, Number(i.vat) || 0),
-      });
     }
 
     return NextResponse.json({
@@ -227,6 +229,8 @@ export async function POST(request: NextRequest) {
         ma_so_thue: ocrMst || null,
       },
       items,
+      total_ocr_items: rawItems.length,
+      total_matched: items.length,
       invoice_info: {
         so_hoa_don: raw.so_hd || null,
         ngay_hoa_don: raw.ngay || null,
