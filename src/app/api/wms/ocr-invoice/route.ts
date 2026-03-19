@@ -145,34 +145,53 @@ export async function POST(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hhList = (hhRes.data || []) as any[];
 
-    // 5. Call Google Gemini Vision API
+    // 5. Call Google Gemini Vision API (try multiple models as fallback)
     const ai = new GoogleGenAI({ apiKey });
+    const models = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"];
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
+    let responseText: string | undefined;
+    let lastError: unknown;
+
+    for (const model of models) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [
             {
-              inlineData: {
-                mimeType: file.type,
-                data: base64Data,
-              },
-            },
-            {
-              text: buildPrompt(nccList, hhList),
+              role: "user",
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: file.type,
+                    data: base64Data,
+                  },
+                },
+                {
+                  text: buildPrompt(nccList, hhList),
+                },
+              ],
             },
           ],
-        },
-      ],
-    });
+        });
+        responseText = response.text;
+        if (responseText) break;
+      } catch (err) {
+        lastError = err;
+        // Try next model
+        continue;
+      }
+    }
 
-    // 6. Extract text response
-    const responseText = response.text;
     if (!responseText) {
+      const errMsg = lastError instanceof Error ? lastError.message : "";
+      if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("RESOURCE_EXHAUSTED")) {
+        return NextResponse.json(
+          { error: "API key moi tao, vui long doi 2-3 phut roi thu lai." },
+          { status: 429 }
+        );
+      }
       return NextResponse.json(
-        { error: "Không nhận được phản hồi từ Gemini" },
+        { error: "Khong nhan duoc phan hoi tu Gemini. Vui long thu lai." },
         { status: 500 }
       );
     }
