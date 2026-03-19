@@ -33,8 +33,9 @@ function norm(s: string): string {
     .replace(/[đĐ]/g, "d").replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
 }
 
-// Bidirectional keyword matching
-// "cu cai trang" vs "rau cu cai trang" → recall=1.0, precision=0.75 → score=0.875
+// Matching: CHI exact word match, dung F1 score, threshold 0.5
+// "cu cai trang" vs "rau cu cai trang" → F1=0.857 ✅
+// "cai thao" vs "trung bac thao" → F1=0.4 ✗ (rejected)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function findBestMatch(ocrName: string, products: any[], field = "ten"): { product: any; score: number } | null {
   if (!ocrName || ocrName.trim().length < 2) return null;
@@ -51,33 +52,39 @@ function findBestMatch(ocrName: string, products: any[], field = "ten"): { produ
     const dbName = p[field] || "";
     const dbNorm = norm(dbName);
 
-    // Exact normalized match
+    // Exact normalized match → perfect score
     if (ocrNorm === dbNorm) return { product: p, score: 1.0 };
+
+    // One contains the other entirely → high score
+    if (dbNorm.includes(ocrNorm) || ocrNorm.includes(dbNorm)) {
+      const longer = Math.max(ocrNorm.length, dbNorm.length);
+      const shorter = Math.min(ocrNorm.length, dbNorm.length);
+      const s = 0.75 + 0.25 * (shorter / longer); // 0.75–1.0
+      if (s > bestScore) { bestScore = s; bestProduct = p; }
+      continue;
+    }
 
     const dbWords = dbNorm.split(" ").filter(w => w.length >= 2);
     if (!dbWords.length) continue;
 
-    // Count OCR keywords found in DB name
-    let hits = 0;
-    const matchedDbIdx = new Set<number>();
+    // CHI exact word match — KHONG substring
+    let ocrHits = 0;
+    let dbHits = 0;
 
     for (const ow of ocrWords) {
-      for (let di = 0; di < dbWords.length; di++) {
-        const dw = dbWords[di];
-        // Exact word match
-        if (dw === ow) { hits += 1.0; matchedDbIdx.add(di); break; }
-        // Substring match (both directions, min 3 chars)
-        if (ow.length >= 3 && dw.length >= 3 && (dw.includes(ow) || ow.includes(dw))) {
-          hits += 0.8; matchedDbIdx.add(di); break;
-        }
-      }
+      if (dbWords.includes(ow)) ocrHits++;
+    }
+    for (const dw of dbWords) {
+      if (ocrWords.includes(dw)) dbHits++;
     }
 
-    if (hits === 0) continue;
+    if (ocrHits === 0) continue;
 
-    const recall = hits / ocrWords.length;
-    const precision = matchedDbIdx.size / dbWords.length;
-    const score = recall * 0.5 + precision * 0.5;
+    const recall = ocrHits / ocrWords.length;    // OCR words found in DB
+    const precision = dbHits / dbWords.length;    // DB words found in OCR
+
+    // F1 score (harmonic mean) — punishes partial matches harder
+    const score = (2 * recall * precision) / (recall + precision);
 
     if (score > bestScore) {
       bestScore = score;
@@ -85,7 +92,7 @@ function findBestMatch(ocrName: string, products: any[], field = "ten"): { produ
     }
   }
 
-  return bestScore >= 0.4 ? { product: bestProduct, score: bestScore } : null;
+  return bestScore >= 0.5 ? { product: bestProduct, score: bestScore } : null;
 }
 
 export async function POST(request: NextRequest) {
@@ -141,7 +148,7 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const [nccRes, hhRes] = await Promise.all([
       supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc, ma_so_thue").eq("trang_thai", "hoat_dong").limit(2000),
-      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh(ten_dvt), gia_binh_quan").eq("is_deleted", false).limit(5000),
+      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh(ten_dvt), gia_binh_quan").or("is_deleted.eq.false,is_deleted.is.null").limit(5000),
     ]);
 
     if (hhRes.error) {
