@@ -27,53 +27,53 @@ Tra ve JSON (KHONG co text nao khac):
   ]
 }`;
 
-// Strip diacritics for comparison — both sides normalized = fair comparison
+// Strip diacritics for comparison
 function norm(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[đĐ]/g, "d").replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
 }
 
-// Multi-strategy similarity: very lenient for approximate matching
-function sim(ocrText: string, dbText: string): number {
+// Extract keywords (words >= 2 chars)
+function keywords(s: string): string[] {
+  return norm(s).split(" ").filter(w => w.length >= 2);
+}
+
+// KEYWORD-BASED matching: OCR keywords can appear ANYWHERE in DB name
+// "cu cai trang" matches "rau cu cai trang" because all 3 keywords exist in DB name
+function matchScore(ocrText: string, dbText: string): number {
   const a = norm(ocrText), b = norm(dbText);
   if (!a || !b) return 0;
-
-  // Exact match
   if (a === b) return 1.0;
 
-  // One contains the other
-  if (a.includes(b) || b.includes(a)) return 0.9;
+  const ocrWords = keywords(ocrText);
+  const dbWords = keywords(dbText);
+  if (!ocrWords.length || !dbWords.length) return 0;
 
-  // Word-level matching
-  const wordsA = a.split(" ").filter(w => w.length >= 2);
-  const wordsB = b.split(" ").filter(w => w.length >= 2);
-  if (!wordsA.length || !wordsB.length) return 0;
-
-  // Count how many words from OCR appear in DB name (or vice versa)
+  // Count how many OCR keywords appear in DB name (ANY position)
   let hits = 0;
-  for (const wa of wordsA) {
-    for (const wb of wordsB) {
-      // Exact word match
-      if (wa === wb) { hits += 1.0; break; }
-      // Partial word match (one contains the other, e.g. "banh" matches "banh")
-      if (wa.length >= 3 && wb.length >= 3 && (wa.includes(wb) || wb.includes(wa))) {
-        hits += 0.8; break;
-      }
-      // First 3+ chars match (typo tolerance: "ban" vs "bap")
-      if (wa.length >= 4 && wb.length >= 4 && wa.substring(0, 3) === wb.substring(0, 3)) {
-        hits += 0.5; break;
-      }
+  for (const ow of ocrWords) {
+    // Strategy 1: exact word match anywhere in DB words
+    if (dbWords.some(dw => dw === ow)) { hits += 1.0; continue; }
+    // Strategy 2: OCR word is substring of any DB word (or vice versa)
+    // e.g. "cai" in "caichua", or "banh" in "banhmi"
+    if (ow.length >= 3 && dbWords.some(dw => dw.includes(ow) || ow.includes(dw))) { hits += 0.8; continue; }
+    // Strategy 3: OCR keyword appears as substring in the FULL normalized DB name
+    // e.g. "cai" found inside "rau cu cai trang"
+    if (ow.length >= 3 && b.includes(ow)) { hits += 0.7; continue; }
+    // Strategy 4: first 3 chars match (typo: "ban" vs "bap")
+    if (ow.length >= 3 && dbWords.some(dw => dw.length >= 3 && dw.substring(0, 3) === ow.substring(0, 3))) {
+      hits += 0.4; continue;
     }
   }
 
-  // Score = hits / total words (use the smaller set for leniency)
-  const divisor = Math.min(wordsA.length, wordsB.length);
-  return divisor > 0 ? hits / divisor : 0;
+  // Score = % of OCR keywords that matched (based on OCR word count)
+  // This way "củ cải trắng" (3 words) matching 3/3 in "rau củ cải trắng" = 1.0
+  return hits / ocrWords.length;
 }
 
-// Find best matching product from full list — LENIENT threshold
+// Find best matching product — keyword-based, lenient
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function findBestProduct(ocrName: string, products: any[]): { product: any; score: number } | null {
+function findBestProduct(ocrName: string, products: any[], field = "ten"): { product: any; score: number } | null {
   if (!ocrName || ocrName.trim().length < 2) return null;
 
   let bestScore = 0;
@@ -81,23 +81,16 @@ function findBestProduct(ocrName: string, products: any[]): { product: any; scor
   let bestProduct: any = null;
 
   for (const p of products) {
-    const score = sim(ocrName, p.ten);
+    const name = p[field] || "";
+    const score = matchScore(ocrName, name);
     if (score > bestScore) {
       bestScore = score;
       bestProduct = p;
     }
-    // Also try matching against ma_hang_hoa
-    if (p.ma_hang_hoa) {
-      const codeScore = sim(ocrName, p.ma_hang_hoa);
-      if (codeScore > bestScore) {
-        bestScore = codeScore;
-        bestProduct = p;
-      }
-    }
   }
 
-  // LENIENT: accept any match >= 0.2 (even 1 word partially matching)
-  return bestScore >= 0.2 ? { product: bestProduct, score: bestScore } : null;
+  // Accept if at least 40% of OCR keywords found in DB name
+  return bestScore >= 0.4 ? { product: bestProduct, score: bestScore } : null;
 }
 
 export async function POST(request: NextRequest) {
@@ -153,7 +146,7 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const [nccRes, hhRes] = await Promise.all([
       supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc, ma_so_thue").eq("trang_thai", "hoat_dong").limit(2000),
-      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh(ten_dvt), gia_binh_quan").eq("is_deleted", false).limit(5000),
+      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh, gia_binh_quan").eq("is_deleted", false).limit(5000),
     ]);
 
     if (hhRes.error) {
@@ -175,7 +168,7 @@ export async function POST(request: NextRequest) {
       matchedNcc = nccList.find(n => n.ma_so_thue && norm(n.ma_so_thue) === norm(ocrMst));
     }
     if (!matchedNcc && ocrNcc) {
-      const result = findBestProduct(ocrNcc, nccList.map(n => ({ ...n, ten: n.ten_ncc })));
+      const result = findBestProduct(ocrNcc, nccList, "ten_ncc");
       if (result) matchedNcc = nccList.find(n => n.id === result.product.id);
     }
 
@@ -188,17 +181,17 @@ export async function POST(request: NextRequest) {
     const items = [];
     for (const i of rawItems) {
       const ocrName = (i.ten || "").trim();
-      const match = findBestProduct(ocrName, allProducts);
+      const match = findBestProduct(ocrName, allProducts, "ten");
 
       if (match) {
         const p = match.product;
         items.push({
           matched_hang_hoa_id: p.id,
           matched_ten: p.ten,
-          matched_dvt: p.don_vi_tinh?.ten_dvt || null,
+          matched_dvt: p.don_vi_tinh || null,
           matched_gia: p.gia_binh_quan || 0,
           ocr_ten_hang_hoa: ocrName,
-          don_vi_tinh: p.don_vi_tinh?.ten_dvt || "",
+          don_vi_tinh: p.don_vi_tinh || "",
           so_luong: Math.max(0, Number(i.sl) || 0),
           don_gia: Number(i.gia) > 0 ? Number(i.gia) : (p.gia_binh_quan || 0),
           vat_pct: Math.max(0, Number(i.vat) || 0),
@@ -211,7 +204,7 @@ export async function POST(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const debug_ocr_items = rawItems.map((i: any) => {
       const ocrName = (i.ten || "").trim();
-      const match = findBestProduct(ocrName, allProducts);
+      const match = findBestProduct(ocrName, allProducts, "ten");
       return {
         ocr: ocrName,
         best_match: match ? { name: match.product.ten, score: Math.round(match.score * 100) } : null,
