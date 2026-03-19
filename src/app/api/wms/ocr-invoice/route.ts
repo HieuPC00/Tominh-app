@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
+import Groq from "groq-sdk";
 import { createClient } from "@/lib/supabase-server";
 
-// Allow up to 60s for Gemini API call on Vercel
+// Allow up to 60s for Groq Vision API call on Vercel
 export const maxDuration = 60;
 
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 
-// Build prompt for Gemini Vision
+// Build prompt for Vision model
 function buildPrompt(
   nccList: { id: string; ma_ncc: string; ten_ncc: string; ma_so_thue: string | null }[],
   hhList: { id: string; ma_hang_hoa: string; ten: string; don_vi_tinh: { ten_dvt: string } | null; gia_binh_quan: number }[]
@@ -21,52 +21,52 @@ function buildPrompt(
     .map((h) => `${h.id} | ${h.ma_hang_hoa} | ${h.ten} | ${h.don_vi_tinh?.ten_dvt || ""} | ${h.gia_binh_quan}`)
     .join("\n");
 
-  return `Bạn là hệ thống OCR chuyên đọc hóa đơn/phiếu nhập hàng tiếng Việt.
+  return `Ban la he thong OCR chuyen doc hoa don/phieu nhap hang tieng Viet.
 
-Hãy đọc hình ảnh hóa đơn và trích xuất các thông tin sau:
+Hay doc hinh anh hoa don va trich xuat cac thong tin sau:
 
-1. THÔNG TIN NHÀ CUNG CẤP:
-- Tên NCC (trên hóa đơn)
-- Mã số thuế (nếu có)
-- Địa chỉ (nếu có)
+1. THONG TIN NHA CUNG CAP:
+- Ten NCC (tren hoa don)
+- Ma so thue (neu co)
+- Dia chi (neu co)
 
-2. DANH SÁCH HÀNG HÓA (mỗi dòng một sản phẩm):
-- Tên hàng hóa
-- Đơn vị tính
-- Số lượng
-- Đơn giá
-- Thuế VAT (% nếu có)
+2. DANH SACH HANG HOA (moi dong mot san pham):
+- Ten hang hoa
+- Don vi tinh
+- So luong
+- Don gia
+- Thue VAT (% neu co)
 
-3. THÔNG TIN KHÁC:
-- Số hóa đơn
-- Ngày hóa đơn
-- Tổng tiền trên hóa đơn
+3. THONG TIN KHAC:
+- So hoa don
+- Ngay hoa don
+- Tong tien tren hoa don
 
-QUAN TRỌNG: Hãy đối chiếu với danh sách NCC và Hàng hóa có sẵn bên dưới để tìm kết quả khớp (match).
-Nếu tên NCC trên hóa đơn giống hoặc tương tự với một NCC trong danh sách, hãy trả về id của NCC đó.
-Nếu tên hàng hóa trên hóa đơn giống hoặc tương tự với một hàng hóa trong danh sách, hãy trả về id của hàng hóa đó.
-Ưu tiên match theo mã số thuế nếu có.
+QUAN TRONG: Hay doi chieu voi danh sach NCC va Hang hoa co san ben duoi de tim ket qua khop (match).
+Neu ten NCC tren hoa don giong hoac tuong tu voi mot NCC trong danh sach, hay tra ve id cua NCC do.
+Neu ten hang hoa tren hoa don giong hoac tuong tu voi mot hang hoa trong danh sach, hay tra ve id cua hang hoa do.
+Uu tien match theo ma so thue neu co.
 
-=== DANH SÁCH NCC CÓ SẴN ===
+=== DANH SACH NCC CO SAN ===
 id | ma_ncc | ten_ncc | ma_so_thue
-${nccRows || "(Chưa có NCC nào)"}
+${nccRows || "(Chua co NCC nao)"}
 
-=== DANH SÁCH HÀNG HÓA CÓ SẴN ===
+=== DANH SACH HANG HOA CO SAN ===
 id | ma_hang_hoa | ten | don_vi_tinh | gia_binh_quan
-${hhRows || "(Chưa có hàng hóa nào)"}
+${hhRows || "(Chua co hang hoa nao)"}
 
-Trả về KẾT QUẢ dạng JSON với cấu trúc như sau (KHÔNG có text khác ngoài JSON):
+Tra ve KET QUA dang JSON voi cau truc nhu sau (KHONG co text khac ngoai JSON):
 {
   "supplier": {
-    "matched_id": "uuid hoặc null",
-    "ten_ncc": "tên trên hóa đơn",
-    "ma_so_thue": "... hoặc null",
-    "dia_chi": "... hoặc null"
+    "matched_id": "uuid hoac null",
+    "ten_ncc": "ten tren hoa don",
+    "ma_so_thue": "... hoac null",
+    "dia_chi": "... hoac null"
   },
   "items": [
     {
-      "matched_hang_hoa_id": "uuid hoặc null",
-      "ten_hang_hoa": "tên trên hóa đơn",
+      "matched_hang_hoa_id": "uuid hoac null",
+      "ten_hang_hoa": "ten tren hoa don",
       "don_vi_tinh": "...",
       "so_luong": 0,
       "don_gia": 0,
@@ -74,22 +74,22 @@ Trả về KẾT QUẢ dạng JSON với cấu trúc như sau (KHÔNG có text k
     }
   ],
   "invoice_info": {
-    "so_hoa_don": "... hoặc null",
-    "ngay_hoa_don": "YYYY-MM-DD hoặc null",
+    "so_hoa_don": "... hoac null",
+    "ngay_hoa_don": "YYYY-MM-DD hoac null",
     "tong_tien": 0
   },
   "confidence": "high | medium | low",
-  "notes": "bất kỳ ghi chú nào về độ chính xác"
+  "notes": "bat ky ghi chu nao ve do chinh xac"
 }`;
 }
 
 export async function POST(request: NextRequest) {
   try {
     // 1. Validate API key
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Chưa cấu hình GEMINI_API_KEY trên server" },
+        { error: "Chua cau hinh GROQ_API_KEY tren server" },
         { status: 500 }
       );
     }
@@ -100,28 +100,29 @@ export async function POST(request: NextRequest) {
 
     if (!file) {
       return NextResponse.json(
-        { error: "Không tìm thấy file ảnh" },
+        { error: "Khong tim thay file anh" },
         { status: 400 }
       );
     }
 
     if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
-        { error: "Chỉ hỗ trợ file ảnh JPEG, PNG, hoặc WebP" },
+        { error: "Chi ho tro file anh JPEG, PNG, hoac WebP" },
         { status: 400 }
       );
     }
 
     if (file.size > MAX_SIZE) {
       return NextResponse.json(
-        { error: "File quá lớn. Giới hạn 5MB." },
+        { error: "File qua lon. Gioi han 5MB." },
         { status: 400 }
       );
     }
 
-    // 3. Convert to base64
+    // 3. Convert to base64 data URL
     const arrayBuffer = await file.arrayBuffer();
     const base64Data = Buffer.from(arrayBuffer).toString("base64");
+    const dataUrl = `data:${file.type};base64,${base64Data}`;
 
     // 4. Fetch NCC + HH from Supabase for context matching
     const supabase = await createClient();
@@ -145,49 +146,56 @@ export async function POST(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hhList = (hhRes.data || []) as any[];
 
-    // 5. Call Google Gemini Vision API
-    const ai = new GoogleGenAI({ apiKey });
-    const prompt = buildPrompt(nccList, hhList);
+    // 5. Call Groq Vision API (FREE - Llama 3.2 Vision)
+    const groq = new Groq({ apiKey });
 
     let responseText: string | undefined;
 
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: [
+      const response = await groq.chat.completions.create({
+        model: "llama-3.2-90b-vision-preview",
+        messages: [
           {
-            inlineData: {
-              mimeType: file.type,
-              data: base64Data,
-            },
-          },
-          {
-            text: prompt,
+            role: "user",
+            content: [
+              {
+                type: "image_url",
+                image_url: {
+                  url: dataUrl,
+                },
+              },
+              {
+                type: "text",
+                text: buildPrompt(nccList, hhList),
+              },
+            ],
           },
         ],
+        max_tokens: 4096,
+        temperature: 0.1,
       });
-      responseText = response.text;
+      responseText = response.choices?.[0]?.message?.content || undefined;
     } catch (err) {
-      console.error("Gemini API error:", err);
+      console.error("Groq API error:", err);
       const errMsg = err instanceof Error ? err.message : String(err);
       return NextResponse.json(
-        { error: `Loi Gemini: ${errMsg}` },
+        { error: `Loi Groq: ${errMsg}` },
         { status: 500 }
       );
     }
 
     if (!responseText) {
       return NextResponse.json(
-        { error: "Gemini khong tra ve ket qua. Vui long thu lai voi anh ro hon." },
+        { error: "AI khong tra ve ket qua. Vui long thu lai voi anh ro hon." },
         { status: 500 }
       );
     }
 
-    // 7. Parse JSON from Gemini response
+    // 6. Parse JSON from response
     let parsed;
     try {
       let jsonStr = responseText.trim();
-      // Gemini may wrap in ```json ... ```
+      // AI may wrap in ```json ... ```
       const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) {
         jsonStr = jsonMatch[1].trim();
@@ -196,14 +204,14 @@ export async function POST(request: NextRequest) {
     } catch {
       return NextResponse.json(
         {
-          error: "Không thể đọc kết quả OCR. Vui lòng thử lại với ảnh rõ hơn.",
+          error: "Khong the doc ket qua OCR. Vui long thu lai voi anh ro hon.",
           raw: responseText,
         },
         { status: 500 }
       );
     }
 
-    // 8. Enrich with matched data from DB
+    // 7. Enrich with matched data from DB
     const result = {
       supplier: {
         matched_id: parsed.supplier?.matched_id || null,
@@ -264,7 +272,7 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error("OCR Invoice error:", err);
     const message =
-      err instanceof Error ? err.message : "Lỗi không xác định";
+      err instanceof Error ? err.message : "Loi khong xac dinh";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
