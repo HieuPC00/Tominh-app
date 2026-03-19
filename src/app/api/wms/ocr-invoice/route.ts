@@ -153,8 +153,14 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const [nccRes, hhRes] = await Promise.all([
       supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc, ma_so_thue").eq("trang_thai", "hoat_dong").limit(2000),
-      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan").eq("is_deleted", false).limit(5000),
+      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh(ten_dvt), gia_binh_quan").eq("is_deleted", false).limit(5000),
     ]);
+
+    if (hhRes.error) {
+      console.error("Supabase hang_hoa error:", hhRes.error);
+      return NextResponse.json({ error: `DB error: ${hhRes.error.message}` }, { status: 500 });
+    }
+
     const nccList = nccRes.data || [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allProducts = (hhRes.data || []) as any[];
