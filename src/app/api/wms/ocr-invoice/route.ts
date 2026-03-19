@@ -145,53 +145,40 @@ export async function POST(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hhList = (hhRes.data || []) as any[];
 
-    // 5. Call Google Gemini Vision API (try multiple models as fallback)
+    // 5. Call Google Gemini Vision API
     const ai = new GoogleGenAI({ apiKey });
-    const models = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"];
+    const prompt = buildPrompt(nccList, hhList);
 
     let responseText: string | undefined;
-    let lastError: unknown;
 
-    for (const model of models) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: file.type,
-                    data: base64Data,
-                  },
-                },
-                {
-                  text: buildPrompt(nccList, hhList),
-                },
-              ],
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: [
+          {
+            inlineData: {
+              mimeType: file.type,
+              data: base64Data,
             },
-          ],
-        });
-        responseText = response.text;
-        if (responseText) break;
-      } catch (err) {
-        lastError = err;
-        // Try next model
-        continue;
-      }
+          },
+          {
+            text: prompt,
+          },
+        ],
+      });
+      responseText = response.text;
+    } catch (err) {
+      console.error("Gemini API error:", err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json(
+        { error: `Loi Gemini: ${errMsg}` },
+        { status: 500 }
+      );
     }
 
     if (!responseText) {
-      const errMsg = lastError instanceof Error ? lastError.message : "";
-      if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("RESOURCE_EXHAUSTED")) {
-        return NextResponse.json(
-          { error: "API key moi tao, vui long doi 2-3 phut roi thu lai." },
-          { status: 429 }
-        );
-      }
       return NextResponse.json(
-        { error: "Khong nhan duoc phan hoi tu Gemini. Vui long thu lai." },
+        { error: "Gemini khong tra ve ket qua. Vui long thu lai voi anh ro hon." },
         { status: 500 }
       );
     }
