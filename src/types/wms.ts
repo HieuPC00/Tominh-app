@@ -16,6 +16,10 @@ export type TrangThaiKiemKe = 'nhap' | 'dang_dem' | 'hoan_tat' | 'da_dieu_chinh'
 export type LyDoHuy = 'het_hsd' | 'hong' | 'loi_bao_quan' | 'kiem_ke_thieu' | 'khac';
 export type TrangThaiHuy = 'cho_duyet' | 'da_huy' | 'tu_choi';
 
+// Thu Mua (Purchase Management)
+export type TrangThaiDatHang = 'cho_xac_nhan' | 'da_xac_nhan' | 'dang_giao' | 'da_nhan_hang' | 'da_thanh_toan' | 'huy';
+export type PhuongThucThanhToan = 'chuyen_khoan' | 'tien_mat' | 'sec' | 'vi_dien_tu' | 'khac';
+
 export interface DonViTinh {
   id: string;
   ma_dvt: string;
@@ -126,9 +130,11 @@ export interface PhieuNhap {
   ghi_chu: string | null;
   created_at: string;
   updated_at: string;
+  phieu_dat_hang_id: string | null;
   // Joined
   kho?: KhoHang;
   items?: PhieuNhapItem[];
+  phieu_dat_hang?: PhieuDatHang;
 }
 
 export interface PhieuNhapItem {
@@ -241,4 +247,54 @@ export interface HuyHang {
   hang_hoa?: HangHoa;
   lot?: InventoryLot;
   kho?: KhoHang;
+}
+
+// ==================== THU MUA (PURCHASE MANAGEMENT) ====================
+
+export interface PhieuDatHang {
+  id: string;
+  ma_phieu: string;
+  ncc_id: string;
+  ngay_dat: string;
+  ngay_giao: string | null;
+  trang_thai: TrangThaiDatHang;
+  ghi_chu: string | null;
+  so_hoa_don: string | null;
+  tong_tien_hoa_don: number | null;
+  subtotal: number;
+  vat_amt: number;
+  tong_tien: number;
+  created_at: string;
+  updated_at: string;
+  // Joined
+  nha_cung_cap?: NhaCungCap;
+  items?: PhieuDatHangItem[];
+}
+
+export interface PhieuDatHangItem {
+  id: string;
+  phieu_dat_hang_id: string;
+  hang_hoa_id: string | null;
+  ten_hang_hoa: string;
+  don_vi_tinh: string | null;
+  so_luong: number;
+  don_gia: number;
+  vat_pct: number;
+  ghi_chu: string | null;
+  // Joined
+  hang_hoa?: HangHoa;
+}
+
+export interface ThanhToanNCC {
+  id: string;
+  ncc_id: string;
+  phieu_dat_hang_id: string | null;
+  so_tien: number;
+  ngay_thanh_toan: string;
+  phuong_thuc: PhuongThucThanhToan;
+  ghi_chu: string | null;
+  created_at: string;
+  // Joined
+  nha_cung_cap?: NhaCungCap;
+  phieu_dat_hang?: PhieuDatHang;
 }

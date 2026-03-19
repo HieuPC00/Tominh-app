@@ -10,6 +10,7 @@ const navItems = [
   { href: "/dashboard/orders", label: "Đơn hàng", icon: "🛒" },
   { href: "/dashboard/customers", label: "Khách hàng", icon: "👥" },
   { href: "/dashboard/warehouse", label: "Quản lý Kho", icon: "🏭" },
+  { href: "/dashboard/thu-mua", label: "Thu Mua", icon: "🛒" },
 ];
 
 export default function Sidebar() {

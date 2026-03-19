@@ -4,8 +4,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import type { KhoHang, HangHoa, DonViTinh, PhanLoaiHH, NhaCungCap } from "@/types/wms";
 
 const subTabs = [
-  { id: "hang-hoa", label: "Hàng hóa" },
-  { id: "nha-cung-cap", label: "Nhà cung cấp" },
   { id: "kho", label: "Kho hàng" },
   { id: "don-vi-tinh", label: "Đơn vị tính" },
   { id: "phan-loai", label: "Phân loại" },
@@ -19,7 +17,7 @@ const NHIET_DO_LABEL: Record<string, string> = {
 };
 
 export default function DanhMucTab() {
-  const [activeSubTab, setActiveSubTab] = useState("hang-hoa");
+  const [activeSubTab, setActiveSubTab] = useState("kho");
 
   return (
     <div className="space-y-4">
@@ -40,8 +38,6 @@ export default function DanhMucTab() {
         ))}
       </div>
 
-      {activeSubTab === "hang-hoa" && <HangHoaSubTab />}
-      {activeSubTab === "nha-cung-cap" && <NhaCungCapSubTab />}
       {activeSubTab === "kho" && <KhoSubTab />}
       {activeSubTab === "don-vi-tinh" && <DonViTinhSubTab />}
       {activeSubTab === "phan-loai" && <PhanLoaiSubTab />}
