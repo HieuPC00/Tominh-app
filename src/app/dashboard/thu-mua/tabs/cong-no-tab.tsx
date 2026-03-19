@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import type { PhieuDatHang, TrangThaiDatHang, KhoHang } from "@/types/wms";
+import type { OcrInvoiceItem } from "@/types/ocr";
 import SupplierAutocomplete from "../components/supplier-autocomplete";
 import ProductAutocomplete from "../components/product-autocomplete";
 import PODetailModal from "../components/po-detail-modal";
@@ -135,6 +136,12 @@ export default function CongNoTab() {
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
 
+  // OCR state
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState("");
+  const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string | null>(null);
+  const ocrInputRef = useRef<HTMLInputElement>(null);
+
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   const fetchOrders = useCallback(async () => {
@@ -231,6 +238,88 @@ export default function CongNoTab() {
     setFormNgayGiao("");
     setFormGhiChu("");
     setSubmitError("");
+    setOcrError("");
+    setOcrPreviewUrl(null);
+  }
+
+  async function handleOcrUpload(file: File) {
+    if (!file.type.startsWith("image/")) {
+      setOcrError("Vui long chon file anh (JPEG, PNG, WebP)");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setOcrError("File qua lon. Gioi han 5MB.");
+      return;
+    }
+
+    setOcrLoading(true);
+    setOcrError("");
+
+    const previewUrl = URL.createObjectURL(file);
+    setOcrPreviewUrl(previewUrl);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/wms/ocr-invoice", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Loi OCR");
+      }
+
+      const result = await res.json();
+
+      // Auto-fill form items from OCR result
+      const newItems: FormItem[] = (result.items || []).map(
+        (item: OcrInvoiceItem) => ({
+          uid: crypto.randomUUID(),
+          hang_hoa_id: item.matched_hang_hoa_id || null,
+          ten_hang_hoa: item.matched_ten || item.ocr_ten_hang_hoa,
+          don_vi_tinh: item.matched_dvt || item.don_vi_tinh || "",
+          so_luong: item.so_luong || 0,
+          don_gia: item.don_gia || 0,
+          vat_pct: item.vat_pct || 0,
+          ncc_id: result.supplier?.matched_id || "",
+          ncc_ma: result.supplier?.matched_ma_ncc || "",
+          ncc_ten:
+            result.supplier?.matched_ten_ncc ||
+            result.supplier?.ocr_ten_ncc ||
+            "",
+          ghi_chu: "",
+          productSearch: item.matched_ten || item.ocr_ten_hang_hoa,
+          nccSearch:
+            result.supplier?.matched_ten_ncc ||
+            result.supplier?.ocr_ten_ncc ||
+            "",
+          nccSelected: !!result.supplier?.matched_id,
+        })
+      );
+
+      if (newItems.length > 0) {
+        setFormItems(newItems);
+      }
+
+      // Show confidence notice
+      if (result.confidence === "low") {
+        setOcrError(
+          "Luu y: Do chinh xac thap. Vui long kiem tra ky cac dong hang."
+        );
+      } else if (result.notes) {
+        setOcrError(`Ghi chu OCR: ${result.notes}`);
+      }
+    } catch (err) {
+      setOcrError(
+        err instanceof Error ? err.message : "Loi xu ly anh hoa don"
+      );
+    } finally {
+      setOcrLoading(false);
+      if (ocrInputRef.current) ocrInputRef.current.value = "";
+    }
   }
 
   async function handleSubmit() {
@@ -820,14 +909,104 @@ export default function CongNoTab() {
             </table>
           </div>
 
-          {/* Add row button */}
-          <button
-            type="button"
-            onClick={addFormItem}
-            className="mb-4 rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
-          >
-            + Them dong
-          </button>
+          {/* Add row + OCR upload buttons */}
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={addFormItem}
+              className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
+            >
+              + Them dong
+            </button>
+
+            {/* OCR Upload */}
+            <input
+              ref={ocrInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleOcrUpload(file);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => ocrInputRef.current?.click()}
+              disabled={ocrLoading}
+              className="flex items-center gap-1.5 rounded border border-purple-300 bg-purple-50 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-100 disabled:opacity-50 dark:border-purple-700 dark:bg-purple-950 dark:text-purple-300 dark:hover:bg-purple-900"
+            >
+              {ocrLoading ? (
+                <>
+                  <svg
+                    className="h-3.5 w-3.5 animate-spin"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    />
+                  </svg>
+                  Dang doc hoa don...
+                </>
+              ) : (
+                <>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-3.5 w-3.5"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  Nhap tu anh hoa don
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* OCR error/info */}
+          {ocrError && (
+            <div className="mb-4 rounded border border-orange-200 bg-orange-50 p-3 text-sm text-orange-700 dark:border-orange-800 dark:bg-orange-950 dark:text-orange-300">
+              {ocrError}
+            </div>
+          )}
+
+          {/* OCR preview */}
+          {ocrPreviewUrl && (
+            <div className="mb-4 flex items-start gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={ocrPreviewUrl}
+                alt="Anh hoa don"
+                className="h-24 w-auto rounded border border-gray-200 object-contain dark:border-gray-700"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setOcrPreviewUrl(null);
+                  setOcrError("");
+                }}
+                className="text-xs text-gray-400 hover:text-red-500"
+              >
+                Xoa anh
+              </button>
+            </div>
+          )}
 
           {/* Summary */}
           <div className="mb-4 flex justify-end">
