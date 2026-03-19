@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const [nccRes, hhRes] = await Promise.all([
       supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc, ma_so_thue").eq("trang_thai", "hoat_dong").limit(2000),
-      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh, gia_binh_quan").eq("is_deleted", false).limit(5000),
+      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh(ten_dvt), gia_binh_quan").eq("is_deleted", false).limit(5000),
     ]);
 
     if (hhRes.error) {
@@ -188,10 +188,10 @@ export async function POST(request: NextRequest) {
         items.push({
           matched_hang_hoa_id: p.id,
           matched_ten: p.ten,
-          matched_dvt: p.don_vi_tinh || null,
+          matched_dvt: p.don_vi_tinh?.ten_dvt || null,
           matched_gia: p.gia_binh_quan || 0,
           ocr_ten_hang_hoa: ocrName,
-          don_vi_tinh: p.don_vi_tinh || "",
+          don_vi_tinh: p.don_vi_tinh?.ten_dvt || "",
           so_luong: Math.max(0, Number(i.sl) || 0),
           don_gia: Number(i.gia) > 0 ? Number(i.gia) : (p.gia_binh_quan || 0),
           vat_pct: Math.max(0, Number(i.vat) || 0),
