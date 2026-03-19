@@ -274,9 +274,13 @@ export default function CongNoTab() {
 
       const result = await res.json();
 
-      // Auto-fill form items from OCR result
-      const newItems: FormItem[] = (result.items || []).map(
-        (item: OcrInvoiceItem) => ({
+      // Auto-fill form items from OCR result — only items with real data
+      const newItems: FormItem[] = (result.items || [])
+        .filter((item: OcrInvoiceItem) => {
+          const name = (item.matched_ten || item.ocr_ten_hang_hoa || "").trim();
+          return name.length >= 2; // Skip empty/garbage rows
+        })
+        .map((item: OcrInvoiceItem) => ({
           uid: crypto.randomUUID(),
           hang_hoa_id: item.matched_hang_hoa_id || null,
           ten_hang_hoa: item.matched_ten || item.ocr_ten_hang_hoa,
@@ -290,27 +294,26 @@ export default function CongNoTab() {
             result.supplier?.matched_ten_ncc ||
             result.supplier?.ocr_ten_ncc ||
             "",
-          ghi_chu: "",
+          ghi_chu: !item.matched_hang_hoa_id ? `(OCR: ${item.ocr_ten_hang_hoa})` : "",
           productSearch: item.matched_ten || item.ocr_ten_hang_hoa,
           nccSearch:
             result.supplier?.matched_ten_ncc ||
             result.supplier?.ocr_ten_ncc ||
             "",
           nccSelected: !!result.supplier?.matched_id,
-        })
-      );
+        }));
 
       if (newItems.length > 0) {
         setFormItems(newItems);
-      }
-
-      // Show confidence notice
-      if (result.confidence === "low") {
+        const matchedCount = newItems.filter((i: FormItem) => i.hang_hoa_id).length;
         setOcrError(
-          "Luu y: Do chinh xac thap. Vui long kiem tra ky cac dong hang."
+          `Doc duoc ${newItems.length} san pham (${matchedCount} khop voi du lieu co san). ` +
+          (result.supplier?.matched_id
+            ? `NCC: ${result.supplier.matched_ten_ncc}`
+            : `NCC tren anh: "${result.supplier?.ocr_ten_ncc || "Khong doc duoc"}" — chua khop, vui long chon thu cong.`)
         );
-      } else if (result.notes) {
-        setOcrError(`Ghi chu OCR: ${result.notes}`);
+      } else {
+        setOcrError("Khong doc duoc san pham nao tu anh. Thu chup ro hon.");
       }
     } catch (err) {
       setOcrError(

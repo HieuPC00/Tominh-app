@@ -8,68 +8,30 @@ export const maxDuration = 60;
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 
-// Build prompt for Vision model
-function buildPrompt(
-  nccList: { id: string; ma_ncc: string; ten_ncc: string; ma_so_thue: string | null }[],
-  hhList: { id: string; ma_hang_hoa: string; ten: string; don_vi_tinh: { ten_dvt: string } | null; gia_binh_quan: number }[]
-): string {
-  const nccRows = nccList
-    .map((n) => `${n.id} | ${n.ma_ncc} | ${n.ten_ncc} | ${n.ma_so_thue || ""}`)
-    .join("\n");
+// ===== SIMPLE PROMPT: Just extract data, NO matching =====
+const OCR_PROMPT = `Doc hinh anh hoa don/phieu nhap hang tieng Viet.
 
-  const hhRows = hhList
-    .map((h) => `${h.id} | ${h.ma_hang_hoa} | ${h.ten} | ${h.don_vi_tinh?.ten_dvt || ""} | ${h.gia_binh_quan}`)
-    .join("\n");
+Trich xuat CHINH XAC cac thong tin sau:
 
-  return `Ban la he thong OCR chuyen doc hoa don/phieu nhap hang tieng Viet.
+1. NHA CUNG CAP: ten, ma so thue, dia chi
+2. HANG HOA: moi dong san pham gom: ten, don vi tinh, so luong, don gia, VAT%
+3. So hoa don, ngay, tong tien
 
-Hay doc hinh anh hoa don va trich xuat cac thong tin sau:
+CHI trich xuat dong nao co TEN HANG HOA thuc su. Bo qua dong tong, dong trong, tieu de.
 
-1. THONG TIN NHA CUNG CAP:
-- Ten NCC (tren hoa don)
-- Ma so thue (neu co)
-- Dia chi (neu co)
-
-2. DANH SACH HANG HOA (moi dong mot san pham):
-- Ten hang hoa
-- Don vi tinh
-- So luong
-- Don gia
-- Thue VAT (% neu co)
-
-3. THONG TIN KHAC:
-- So hoa don
-- Ngay hoa don
-- Tong tien tren hoa don
-
-QUAN TRONG: Hay doi chieu voi danh sach NCC va Hang hoa co san ben duoi de tim ket qua khop (match).
-Neu ten NCC tren hoa don giong hoac tuong tu voi mot NCC trong danh sach, hay tra ve id cua NCC do.
-Neu ten hang hoa tren hoa don giong hoac tuong tu voi mot hang hoa trong danh sach, hay tra ve id cua hang hoa do.
-Uu tien match theo ma so thue neu co.
-
-=== DANH SACH NCC CO SAN ===
-id | ma_ncc | ten_ncc | ma_so_thue
-${nccRows || "(Chua co NCC nao)"}
-
-=== DANH SACH HANG HOA CO SAN ===
-id | ma_hang_hoa | ten | don_vi_tinh | gia_binh_quan
-${hhRows || "(Chua co hang hoa nao)"}
-
-Tra ve KET QUA dang JSON voi cau truc nhu sau (KHONG co text khac ngoai JSON):
+Tra ve JSON (KHONG co text khac):
 {
   "supplier": {
-    "matched_id": "uuid hoac null",
-    "ten_ncc": "ten tren hoa don",
+    "ten_ncc": "...",
     "ma_so_thue": "... hoac null",
     "dia_chi": "... hoac null"
   },
   "items": [
     {
-      "matched_hang_hoa_id": "uuid hoac null",
-      "ten_hang_hoa": "ten tren hoa don",
-      "don_vi_tinh": "...",
-      "so_luong": 0,
-      "don_gia": 0,
+      "ten_hang_hoa": "ten chinh xac tren hoa don",
+      "don_vi_tinh": "kg/goi/chai/...",
+      "so_luong": 10,
+      "don_gia": 50000,
       "vat_pct": 0
     }
   ],
@@ -77,10 +39,73 @@ Tra ve KET QUA dang JSON voi cau truc nhu sau (KHONG co text khac ngoai JSON):
     "so_hoa_don": "... hoac null",
     "ngay_hoa_don": "YYYY-MM-DD hoac null",
     "tong_tien": 0
-  },
-  "confidence": "high | medium | low",
-  "notes": "bat ky ghi chu nao ve do chinh xac"
+  }
 }`;
+
+// ===== Fuzzy matching: normalize Vietnamese text =====
+function normalize(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "d")
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Similarity score: ratio of matching words
+function similarity(a: string, b: string): number {
+  const na = normalize(a);
+  const nb = normalize(b);
+
+  // Exact match after normalize
+  if (na === nb) return 1.0;
+
+  // One contains the other
+  if (na.includes(nb) || nb.includes(na)) return 0.85;
+
+  // Word overlap
+  const wordsA = na.split(" ");
+  const wordsB = nb.split(" ");
+  let matchCount = 0;
+  for (const wa of wordsA) {
+    if (wa.length < 2) continue;
+    for (const wb of wordsB) {
+      if (wb.length < 2 && wa === wb) { matchCount++; break; }
+      if (wb.includes(wa) || wa.includes(wb)) { matchCount++; break; }
+    }
+  }
+  const maxWords = Math.max(wordsA.length, wordsB.length);
+  return maxWords > 0 ? matchCount / maxWords : 0;
+}
+
+// Find best match from a list
+function findBestMatch<T extends { id: string }>(
+  ocrText: string,
+  list: T[],
+  getNames: (item: T) => string[],
+  threshold = 0.4
+): T | null {
+  if (!ocrText || ocrText.trim().length < 2) return null;
+
+  let bestScore = 0;
+  let bestItem: T | null = null;
+
+  for (const item of list) {
+    const names = getNames(item);
+    for (const name of names) {
+      if (!name) continue;
+      const score = similarity(ocrText, name);
+      if (score > bestScore) {
+        bestScore = score;
+        bestItem = item;
+      }
+    }
+  }
+
+  return bestScore >= threshold ? bestItem : null;
 }
 
 export async function POST(request: NextRequest) {
@@ -119,12 +144,81 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Convert to base64 data URL
+    // 3. Convert to base64
     const arrayBuffer = await file.arrayBuffer();
     const base64Data = Buffer.from(arrayBuffer).toString("base64");
     const dataUrl = `data:${file.type};base64,${base64Data}`;
 
-    // 4. Fetch NCC + HH from Supabase for context matching
+    // 4. Call Groq Vision — simple prompt, just extract text
+    const groq = new Groq({ apiKey });
+
+    let responseText: string | undefined;
+
+    try {
+      const response = await groq.chat.completions.create({
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image_url",
+                image_url: { url: dataUrl },
+              },
+              {
+                type: "text",
+                text: OCR_PROMPT,
+              },
+            ],
+          },
+        ],
+        max_tokens: 4096,
+        temperature: 0.1,
+      });
+      responseText = response.choices?.[0]?.message?.content || undefined;
+    } catch (err) {
+      console.error("Groq API error:", err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json(
+        { error: `Loi Groq: ${errMsg}` },
+        { status: 500 }
+      );
+    }
+
+    if (!responseText) {
+      return NextResponse.json(
+        { error: "AI khong tra ve ket qua. Thu lai voi anh ro hon." },
+        { status: 500 }
+      );
+    }
+
+    // 5. Parse JSON from AI response
+    let parsed;
+    try {
+      let jsonStr = responseText.trim();
+      // Strip markdown code block if present
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim();
+      }
+      // Try to find JSON object in response
+      const objMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (objMatch) {
+        jsonStr = objMatch[0];
+      }
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      console.error("Failed to parse OCR response:", responseText);
+      return NextResponse.json(
+        {
+          error: "Khong the doc ket qua OCR. Thu lai voi anh ro hon.",
+          raw: responseText.substring(0, 500),
+        },
+        { status: 500 }
+      );
+    }
+
+    // 6. Fetch NCC + HH from Supabase for FUZZY MATCHING
     const supabase = await createClient();
 
     const [nccRes, hhRes] = await Promise.all([
@@ -146,127 +240,79 @@ export async function POST(request: NextRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hhList = (hhRes.data || []) as any[];
 
-    // 5. Call Groq Vision API (FREE - Llama 3.2 Vision)
-    const groq = new Groq({ apiKey });
+    // 7. FUZZY MATCH supplier
+    const ocrSupplierName = parsed.supplier?.ten_ncc || "";
+    const ocrMST = parsed.supplier?.ma_so_thue || "";
 
-    let responseText: string | undefined;
+    // Try MST match first (exact)
+    let matchedNcc = ocrMST
+      ? nccList.find(
+          (n) => n.ma_so_thue && normalize(n.ma_so_thue) === normalize(ocrMST)
+        )
+      : null;
 
-    try {
-      const response = await groq.chat.completions.create({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: dataUrl,
-                },
-              },
-              {
-                type: "text",
-                text: buildPrompt(nccList, hhList),
-              },
-            ],
-          },
-        ],
-        max_tokens: 4096,
-        temperature: 0.1,
-      });
-      responseText = response.choices?.[0]?.message?.content || undefined;
-    } catch (err) {
-      console.error("Groq API error:", err);
-      const errMsg = err instanceof Error ? err.message : String(err);
-      return NextResponse.json(
-        { error: `Loi Groq: ${errMsg}` },
-        { status: 500 }
+    // Fallback to fuzzy name match
+    if (!matchedNcc && ocrSupplierName) {
+      matchedNcc = findBestMatch(
+        ocrSupplierName,
+        nccList,
+        (n) => [n.ten_ncc, n.ma_ncc],
+        0.35
       );
     }
 
-    if (!responseText) {
-      return NextResponse.json(
-        { error: "AI khong tra ve ket qua. Vui long thu lai voi anh ro hon." },
-        { status: 500 }
-      );
-    }
+    // 8. FUZZY MATCH items + FILTER empty rows
+    const rawItems = parsed.items || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const validItems = rawItems.filter((item: any) => {
+      const name = (item.ten_hang_hoa || "").trim();
+      // Filter out items without a real product name
+      if (name.length < 2) return false;
+      return true;
+    });
 
-    // 6. Parse JSON from response
-    let parsed;
-    try {
-      let jsonStr = responseText.trim();
-      // AI may wrap in ```json ... ```
-      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[1].trim();
-      }
-      parsed = JSON.parse(jsonStr);
-    } catch {
-      return NextResponse.json(
-        {
-          error: "Khong the doc ket qua OCR. Vui long thu lai voi anh ro hon.",
-          raw: responseText,
-        },
-        { status: 500 }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const enrichedItems = validItems.map((item: any) => {
+      const ocrName = (item.ten_hang_hoa || "").trim();
+      const matchedHH = findBestMatch(
+        ocrName,
+        hhList,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (h: any) => [h.ten, h.ma_hang_hoa],
+        0.35
       );
-    }
 
-    // 7. Enrich with matched data from DB
+      return {
+        matched_hang_hoa_id: matchedHH?.id || null,
+        matched_ten: matchedHH?.ten || null,
+        matched_dvt: matchedHH?.don_vi_tinh?.ten_dvt || null,
+        ocr_ten_hang_hoa: ocrName,
+        don_vi_tinh: item.don_vi_tinh || "",
+        so_luong: Number(item.so_luong) || 0,
+        don_gia: Number(item.don_gia) || 0,
+        vat_pct: Number(item.vat_pct) || 0,
+      };
+    });
+
+    // 9. Build result
     const result = {
       supplier: {
-        matched_id: parsed.supplier?.matched_id || null,
-        matched_ma_ncc: null as string | null,
-        matched_ten_ncc: null as string | null,
-        ocr_ten_ncc: parsed.supplier?.ten_ncc || "",
-        ma_so_thue: parsed.supplier?.ma_so_thue || null,
+        matched_id: matchedNcc?.id || null,
+        matched_ma_ncc: matchedNcc?.ma_ncc || null,
+        matched_ten_ncc: matchedNcc?.ten_ncc || null,
+        ocr_ten_ncc: ocrSupplierName,
+        ma_so_thue: ocrMST || null,
         dia_chi: parsed.supplier?.dia_chi || null,
       },
-      items: (parsed.items || []).map(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (item: any) => ({
-          matched_hang_hoa_id: item.matched_hang_hoa_id || null,
-          matched_ten: null as string | null,
-          matched_dvt: null as string | null,
-          ocr_ten_hang_hoa: item.ten_hang_hoa || "",
-          don_vi_tinh: item.don_vi_tinh || "",
-          so_luong: Number(item.so_luong) || 0,
-          don_gia: Number(item.don_gia) || 0,
-          vat_pct: Number(item.vat_pct) || 0,
-        })
-      ),
+      items: enrichedItems,
       invoice_info: {
         so_hoa_don: parsed.invoice_info?.so_hoa_don || null,
         ngay_hoa_don: parsed.invoice_info?.ngay_hoa_don || null,
         tong_tien: Number(parsed.invoice_info?.tong_tien) || null,
       },
-      confidence: parsed.confidence || "medium",
-      notes: parsed.notes || null,
+      confidence: enrichedItems.length > 0 ? "medium" : "low",
+      notes: `Doc duoc ${enrichedItems.length} san pham. NCC: ${matchedNcc ? "Da khop" : "Chua khop"}.`,
     };
-
-    // Enrich supplier match
-    if (result.supplier.matched_id) {
-      const matchedNcc = nccList.find(
-        (n) => n.id === result.supplier.matched_id
-      );
-      if (matchedNcc) {
-        result.supplier.matched_ma_ncc = matchedNcc.ma_ncc;
-        result.supplier.matched_ten_ncc = matchedNcc.ten_ncc;
-      }
-    }
-
-    // Enrich product matches
-    for (const item of result.items) {
-      if (item.matched_hang_hoa_id) {
-        const matchedHH = hhList.find(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (h: any) => h.id === item.matched_hang_hoa_id
-        );
-        if (matchedHH) {
-          item.matched_ten = matchedHH.ten;
-          item.matched_dvt = matchedHH.don_vi_tinh?.ten_dvt || null;
-        }
-      }
-    }
 
     return NextResponse.json(result);
   } catch (err) {
