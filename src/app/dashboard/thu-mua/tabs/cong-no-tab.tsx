@@ -277,21 +277,22 @@ export default function CongNoTab() {
       const totalMatched = result.total_matched || 0;
 
       // CHI hien thi san pham da match voi DB — ten, DVT lay tu DB
+      // ghi_chu = OCR text goc de user kiem tra
       const newItems: FormItem[] = (result.items || [])
         .filter((item: OcrInvoiceItem) => !!item.matched_hang_hoa_id)
         .map((item: OcrInvoiceItem) => ({
           uid: crypto.randomUUID(),
           hang_hoa_id: item.matched_hang_hoa_id!,
-          ten_hang_hoa: item.matched_ten!,          // Ten 100% tu DB
-          don_vi_tinh: item.matched_dvt || "",       // DVT 100% tu DB
-          so_luong: item.so_luong || 0,              // SL tu anh
-          don_gia: item.don_gia || 0,                // Gia tu anh (fallback DB)
+          ten_hang_hoa: item.matched_ten!,
+          don_vi_tinh: item.matched_dvt || "",
+          so_luong: item.so_luong || 0,
+          don_gia: item.don_gia || 0,
           vat_pct: item.vat_pct || 0,
           ncc_id: result.supplier?.matched_id || "",
           ncc_ma: result.supplier?.matched_ma_ncc || "",
           ncc_ten: result.supplier?.matched_ten_ncc || result.supplier?.ocr_ten_ncc || "",
-          ghi_chu: "",
-          productSearch: item.matched_ten!,          // Search = ten tu DB
+          ghi_chu: `OCR: ${item.ocr_ten_hang_hoa} (${item.match_score}%)`,
+          productSearch: item.matched_ten!,
           nccSearch: result.supplier?.matched_ten_ncc || result.supplier?.ocr_ten_ncc || "",
           nccSelected: !!result.supplier?.matched_id,
         }));

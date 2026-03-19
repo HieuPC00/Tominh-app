@@ -38,8 +38,12 @@ function keywords(s: string): string[] {
   return norm(s).split(" ").filter(w => w.length >= 2);
 }
 
-// KEYWORD-BASED matching: OCR keywords can appear ANYWHERE in DB name
-// "cu cai trang" matches "rau cu cai trang" because all 3 keywords exist in DB name
+// BIDIRECTIONAL keyword matching:
+// Score considers BOTH directions:
+//   1. How many OCR words found in DB name (recall)
+//   2. How many DB words are matched (precision) — penalizes DB names with many extra words
+// Example: OCR "Bắp" vs DB "Bột bắp 150g" → recall=1.0 but precision=0.33 → score=0.53
+// Example: OCR "Bắp" vs DB "Bắp"          → recall=1.0 AND precision=1.0 → score=1.0
 function matchScore(ocrText: string, dbText: string): number {
   const a = norm(ocrText), b = norm(dbText);
   if (!a || !b) return 0;
@@ -49,26 +53,31 @@ function matchScore(ocrText: string, dbText: string): number {
   const dbWords = keywords(dbText);
   if (!ocrWords.length || !dbWords.length) return 0;
 
-  // Count how many OCR keywords appear in DB name (ANY position)
-  let hits = 0;
+  // Count OCR words found in DB (recall)
+  let ocrHits = 0;
+  const matchedDbIndices = new Set<number>();
   for (const ow of ocrWords) {
-    // Strategy 1: exact word match anywhere in DB words
-    if (dbWords.some(dw => dw === ow)) { hits += 1.0; continue; }
-    // Strategy 2: OCR word is substring of any DB word (or vice versa)
-    // e.g. "cai" in "caichua", or "banh" in "banhmi"
-    if (ow.length >= 3 && dbWords.some(dw => dw.includes(ow) || ow.includes(dw))) { hits += 0.8; continue; }
-    // Strategy 3: OCR keyword appears as substring in the FULL normalized DB name
-    // e.g. "cai" found inside "rau cu cai trang"
-    if (ow.length >= 3 && b.includes(ow)) { hits += 0.7; continue; }
-    // Strategy 4: first 3 chars match (typo: "ban" vs "bap")
-    if (ow.length >= 3 && dbWords.some(dw => dw.length >= 3 && dw.substring(0, 3) === ow.substring(0, 3))) {
-      hits += 0.4; continue;
+    let matched = false;
+    for (let di = 0; di < dbWords.length; di++) {
+      const dw = dbWords[di];
+      if (dw === ow) { ocrHits += 1.0; matchedDbIndices.add(di); matched = true; break; }
+      if (ow.length >= 3 && (dw.includes(ow) || ow.includes(dw))) {
+        ocrHits += 0.8; matchedDbIndices.add(di); matched = true; break;
+      }
     }
+    // Substring in full name (weaker)
+    if (!matched && ow.length >= 3 && b.includes(ow)) { ocrHits += 0.5; }
   }
 
-  // Score = % of OCR keywords that matched (based on OCR word count)
-  // This way "củ cải trắng" (3 words) matching 3/3 in "rau củ cải trắng" = 1.0
-  return hits / ocrWords.length;
+  const recall = ocrHits / ocrWords.length;         // How much of OCR is covered
+  const precision = matchedDbIndices.size / dbWords.length; // How much of DB name is covered
+
+  // Weighted: recall matters more (0.5) but precision prevents false matches (0.5)
+  // For short OCR like "Bắp":
+  //   vs "Bắp" → 1.0*0.5 + 1.0*0.5 = 1.0
+  //   vs "Bột bắp 150g" → 1.0*0.5 + 0.33*0.5 = 0.67
+  //   vs "Bắp ngô" → 1.0*0.5 + 0.5*0.5 = 0.75
+  return recall * 0.5 + precision * 0.5;
 }
 
 // Find best matching product — keyword-based, lenient

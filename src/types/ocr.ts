@@ -16,6 +16,7 @@ export interface OcrInvoiceItem {
   so_luong: number;
   don_gia: number;
   vat_pct: number;
+  match_score: number;
 }
 
 export interface OcrInvoiceResult {
