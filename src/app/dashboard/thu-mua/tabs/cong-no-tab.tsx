@@ -274,46 +274,37 @@ export default function CongNoTab() {
 
       const result = await res.json();
 
-      // Auto-fill form items from OCR result — only items with real data
+      // Build form items from OCR — use matched data when available, OCR data as fallback
       const newItems: FormItem[] = (result.items || [])
-        .filter((item: OcrInvoiceItem) => {
-          const name = (item.matched_ten || item.ocr_ten_hang_hoa || "").trim();
-          return name.length >= 2; // Skip empty/garbage rows
-        })
-        .map((item: OcrInvoiceItem) => ({
-          uid: crypto.randomUUID(),
-          hang_hoa_id: item.matched_hang_hoa_id || null,
-          ten_hang_hoa: item.matched_ten || item.ocr_ten_hang_hoa,
-          don_vi_tinh: item.matched_dvt || item.don_vi_tinh || "",
-          so_luong: item.so_luong || 0,
-          don_gia: item.don_gia || 0,
-          vat_pct: item.vat_pct || 0,
-          ncc_id: result.supplier?.matched_id || "",
-          ncc_ma: result.supplier?.matched_ma_ncc || "",
-          ncc_ten:
-            result.supplier?.matched_ten_ncc ||
-            result.supplier?.ocr_ten_ncc ||
-            "",
-          ghi_chu: !item.matched_hang_hoa_id ? `(OCR: ${item.ocr_ten_hang_hoa})` : "",
-          productSearch: item.matched_ten || item.ocr_ten_hang_hoa,
-          nccSearch:
-            result.supplier?.matched_ten_ncc ||
-            result.supplier?.ocr_ten_ncc ||
-            "",
-          nccSelected: !!result.supplier?.matched_id,
-        }));
+        .map((item: OcrInvoiceItem) => {
+          const hasMatch = !!item.matched_hang_hoa_id;
+          return {
+            uid: crypto.randomUUID(),
+            hang_hoa_id: item.matched_hang_hoa_id || null,
+            ten_hang_hoa: hasMatch ? item.matched_ten! : item.ocr_ten_hang_hoa,
+            don_vi_tinh: (hasMatch && item.matched_dvt) ? item.matched_dvt : (item.don_vi_tinh || ""),
+            so_luong: item.so_luong || 0,
+            don_gia: item.don_gia || (hasMatch && item.matched_gia ? item.matched_gia : 0),
+            vat_pct: item.vat_pct || 0,
+            ncc_id: result.supplier?.matched_id || "",
+            ncc_ma: result.supplier?.matched_ma_ncc || "",
+            ncc_ten: result.supplier?.matched_ten_ncc || result.supplier?.ocr_ten_ncc || "",
+            ghi_chu: hasMatch ? "" : `OCR: ${item.ocr_ten_hang_hoa}`,
+            productSearch: hasMatch ? item.matched_ten! : item.ocr_ten_hang_hoa,
+            nccSearch: result.supplier?.matched_ten_ncc || result.supplier?.ocr_ten_ncc || "",
+            nccSelected: !!result.supplier?.matched_id,
+          };
+        });
 
       if (newItems.length > 0) {
         setFormItems(newItems);
-        const matchedCount = newItems.filter((i: FormItem) => i.hang_hoa_id).length;
-        setOcrError(
-          `Doc duoc ${newItems.length} san pham (${matchedCount} khop voi du lieu co san). ` +
-          (result.supplier?.matched_id
-            ? `NCC: ${result.supplier.matched_ten_ncc}`
-            : `NCC tren anh: "${result.supplier?.ocr_ten_ncc || "Khong doc duoc"}" — chua khop, vui long chon thu cong.`)
-        );
+        const matched = newItems.filter((i: FormItem) => i.hang_hoa_id).length;
+        const nccInfo = result.supplier?.matched_id
+          ? `NCC: ${result.supplier.matched_ten_ncc}`
+          : `NCC: "${result.supplier?.ocr_ten_ncc || "?"}" (chua khop — chon thu cong)`;
+        setOcrError(`Da doc ${newItems.length} SP (${matched} khop DB). ${nccInfo}`);
       } else {
-        setOcrError("Khong doc duoc san pham nao tu anh. Thu chup ro hon.");
+        setOcrError("Khong doc duoc san pham nao. Thu anh ro hon.");
       }
     } catch (err) {
       setOcrError(

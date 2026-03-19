@@ -2,323 +2,187 @@ import { NextRequest, NextResponse } from "next/server";
 import Groq from "groq-sdk";
 import { createClient } from "@/lib/supabase-server";
 
-// Allow up to 60s for Groq Vision API call on Vercel
 export const maxDuration = 60;
 
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
-const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_SIZE = 5 * 1024 * 1024;
 
-// ===== SIMPLE PROMPT: Just extract data, NO matching =====
-const OCR_PROMPT = `Doc hinh anh hoa don/phieu nhap hang tieng Viet.
+// ===== STRICT PROMPT — only real product lines =====
+const OCR_PROMPT = `Ban la OCR doc hoa don mua hang tieng Viet. Doc anh va tra ve JSON.
 
-Trich xuat CHINH XAC cac thong tin sau:
+QUY TAC QUAN TRONG:
+- CHI lay dong nao la SAN PHAM THUC SU co ten + so luong + don gia.
+- KHONG lay dong tieu de, dong tong cong, dong trong, dong ghi chu.
+- Neu khong doc ro so luong hoac don gia, de gia tri = 0.
+- Don gia la gia 1 don vi san pham (KHONG phai thanh tien).
+- Neu hoa don viet tay kho doc, co gang doc tot nhat co the.
 
-1. NHA CUNG CAP: ten, ma so thue, dia chi
-2. HANG HOA: moi dong san pham gom: ten, don vi tinh, so luong, don gia, VAT%
-3. So hoa don, ngay, tong tien
-
-CHI trich xuat dong nao co TEN HANG HOA thuc su. Bo qua dong tong, dong trong, tieu de.
-
-Tra ve JSON (KHONG co text khac):
+Tra ve CHINH XAC JSON nay (KHONG co text khac ngoai JSON):
 {
-  "supplier": {
-    "ten_ncc": "...",
-    "ma_so_thue": "... hoac null",
-    "dia_chi": "... hoac null"
-  },
+  "ncc": "ten nha cung cap tren hoa don hoac null",
+  "mst": "ma so thue hoac null",
+  "so_hd": "so hoa don hoac null",
+  "ngay": "YYYY-MM-DD hoac null",
   "items": [
-    {
-      "ten_hang_hoa": "ten chinh xac tren hoa don",
-      "don_vi_tinh": "kg/goi/chai/...",
-      "so_luong": 10,
-      "don_gia": 50000,
-      "vat_pct": 0
-    }
-  ],
-  "invoice_info": {
-    "so_hoa_don": "... hoac null",
-    "ngay_hoa_don": "YYYY-MM-DD hoac null",
-    "tong_tien": 0
-  }
+    {"ten": "ten san pham", "dvt": "kg", "sl": 10, "gia": 50000, "vat": 0}
+  ]
 }`;
 
-// ===== Fuzzy matching: normalize Vietnamese text =====
-function normalize(s: string): string {
+// ===== Normalize Vietnamese for fuzzy matching =====
+function norm(s: string): string {
   return s
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/Đ/g, "d")
+    .replace(/[đĐ]/g, "d")
     .replace(/[^a-z0-9\s]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-// Similarity score: ratio of matching words
-function similarity(a: string, b: string): number {
-  const na = normalize(a);
-  const nb = normalize(b);
-
-  // Exact match after normalize
-  if (na === nb) return 1.0;
-
-  // One contains the other
+// Similarity: word overlap ratio
+function sim(a: string, b: string): number {
+  const na = norm(a), nb = norm(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
   if (na.includes(nb) || nb.includes(na)) return 0.85;
 
-  // Word overlap
-  const wordsA = na.split(" ");
-  const wordsB = nb.split(" ");
-  let matchCount = 0;
-  for (const wa of wordsA) {
-    if (wa.length < 2) continue;
-    for (const wb of wordsB) {
-      if (wb.length < 2 && wa === wb) { matchCount++; break; }
-      if (wb.includes(wa) || wa.includes(wb)) { matchCount++; break; }
+  const wa = na.split(" ").filter(w => w.length >= 2);
+  const wb = nb.split(" ").filter(w => w.length >= 2);
+  if (!wa.length || !wb.length) return 0;
+
+  let hits = 0;
+  for (const a of wa) {
+    for (const b of wb) {
+      if (a === b || a.includes(b) || b.includes(a)) { hits++; break; }
     }
   }
-  const maxWords = Math.max(wordsA.length, wordsB.length);
-  return maxWords > 0 ? matchCount / maxWords : 0;
+  return hits / Math.max(wa.length, wb.length);
 }
 
-// Find best match from a list
-function findBestMatch<T extends { id: string }>(
-  ocrText: string,
-  list: T[],
-  getNames: (item: T) => string[],
-  threshold = 0.4
-): T | null {
-  if (!ocrText || ocrText.trim().length < 2) return null;
-
-  let bestScore = 0;
-  let bestItem: T | null = null;
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function bestMatch(text: string, list: any[], getNames: (item: any) => string[], threshold = 0.3) {
+  if (!text || text.trim().length < 2) return null;
+  let best = 0, found = null;
   for (const item of list) {
-    const names = getNames(item);
-    for (const name of names) {
+    for (const name of getNames(item)) {
       if (!name) continue;
-      const score = similarity(ocrText, name);
-      if (score > bestScore) {
-        bestScore = score;
-        bestItem = item;
-      }
+      const s = sim(text, name);
+      if (s > best) { best = s; found = item; }
     }
   }
-
-  return bestScore >= threshold ? bestItem : null;
+  return best >= threshold ? found : null;
 }
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Validate API key
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
-        { error: "Chua cau hinh GROQ_API_KEY tren server" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Chua cau hinh GROQ_API_KEY" }, { status: 500 });
     }
 
-    // 2. Parse FormData
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
+    if (!file) return NextResponse.json({ error: "Khong co file" }, { status: 400 });
+    if (!ALLOWED_TYPES.includes(file.type)) return NextResponse.json({ error: "Chi JPEG/PNG/WebP" }, { status: 400 });
+    if (file.size > MAX_SIZE) return NextResponse.json({ error: "File > 5MB" }, { status: 400 });
 
-    if (!file) {
-      return NextResponse.json(
-        { error: "Khong tim thay file anh" },
-        { status: 400 }
-      );
-    }
+    const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
 
-    if (!ALLOWED_TYPES.includes(file.type)) {
-      return NextResponse.json(
-        { error: "Chi ho tro file anh JPEG, PNG, hoac WebP" },
-        { status: 400 }
-      );
-    }
-
-    if (file.size > MAX_SIZE) {
-      return NextResponse.json(
-        { error: "File qua lon. Gioi han 5MB." },
-        { status: 400 }
-      );
-    }
-
-    // 3. Convert to base64
-    const arrayBuffer = await file.arrayBuffer();
-    const base64Data = Buffer.from(arrayBuffer).toString("base64");
-    const dataUrl = `data:${file.type};base64,${base64Data}`;
-
-    // 4. Call Groq Vision — simple prompt, just extract text
+    // Call Groq
     const groq = new Groq({ apiKey });
-
-    let responseText: string | undefined;
-
+    let text: string | undefined;
     try {
-      const response = await groq.chat.completions.create({
+      const r = await groq.chat.completions.create({
         model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: { url: dataUrl },
-              },
-              {
-                type: "text",
-                text: OCR_PROMPT,
-              },
-            ],
-          },
-        ],
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: `data:${file.type};base64,${base64}` } },
+            { type: "text", text: OCR_PROMPT },
+          ],
+        }],
         max_tokens: 4096,
         temperature: 0.1,
       });
-      responseText = response.choices?.[0]?.message?.content || undefined;
+      text = r.choices?.[0]?.message?.content || undefined;
     } catch (err) {
-      console.error("Groq API error:", err);
-      const errMsg = err instanceof Error ? err.message : String(err);
-      return NextResponse.json(
-        { error: `Loi Groq: ${errMsg}` },
-        { status: 500 }
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: `Loi Groq: ${msg}` }, { status: 500 });
     }
 
-    if (!responseText) {
-      return NextResponse.json(
-        { error: "AI khong tra ve ket qua. Thu lai voi anh ro hon." },
-        { status: 500 }
-      );
-    }
+    if (!text) return NextResponse.json({ error: "AI khong tra ve ket qua" }, { status: 500 });
 
-    // 5. Parse JSON from AI response
-    let parsed;
+    // Parse JSON
+    let raw;
     try {
-      let jsonStr = responseText.trim();
-      // Strip markdown code block if present
-      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        jsonStr = jsonMatch[1].trim();
-      }
-      // Try to find JSON object in response
-      const objMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (objMatch) {
-        jsonStr = objMatch[0];
-      }
-      parsed = JSON.parse(jsonStr);
+      let j = text.trim();
+      const m1 = j.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (m1) j = m1[1].trim();
+      const m2 = j.match(/\{[\s\S]*\}/);
+      if (m2) j = m2[0];
+      raw = JSON.parse(j);
     } catch {
-      console.error("Failed to parse OCR response:", responseText);
-      return NextResponse.json(
-        {
-          error: "Khong the doc ket qua OCR. Thu lai voi anh ro hon.",
-          raw: responseText.substring(0, 500),
-        },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Khong doc duoc JSON tu AI", raw: text.substring(0, 500) }, { status: 500 });
     }
 
-    // 6. Fetch NCC + HH from Supabase for FUZZY MATCHING
+    // Fetch DB data for matching
     const supabase = await createClient();
-
     const [nccRes, hhRes] = await Promise.all([
-      supabase
-        .from("nha_cung_cap")
-        .select("id, ma_ncc, ten_ncc, ma_so_thue")
-        .eq("trang_thai", "hoat_dong")
-        .order("ten_ncc")
-        .limit(2000),
-      supabase
-        .from("hang_hoa")
-        .select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan")
-        .eq("is_deleted", false)
-        .order("ten")
-        .limit(5000),
+      supabase.from("nha_cung_cap").select("id, ma_ncc, ten_ncc, ma_so_thue").eq("trang_thai", "hoat_dong").limit(2000),
+      supabase.from("hang_hoa").select("id, ma_hang_hoa, ten, don_vi_tinh:don_vi_tinh_table(ten_dvt), gia_binh_quan").eq("is_deleted", false).limit(5000),
     ]);
-
     const nccList = nccRes.data || [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const hhList = (hhRes.data || []) as any[];
 
-    // 7. FUZZY MATCH supplier
-    const ocrSupplierName = parsed.supplier?.ten_ncc || "";
-    const ocrMST = parsed.supplier?.ma_so_thue || "";
+    // Match NCC — MST first, then fuzzy name
+    const ocrNcc = raw.ncc || "";
+    const ocrMst = raw.mst || "";
+    let ncc = ocrMst ? nccList.find(n => n.ma_so_thue && norm(n.ma_so_thue) === norm(ocrMst)) : null;
+    if (!ncc && ocrNcc) ncc = bestMatch(ocrNcc, nccList, n => [n.ten_ncc, n.ma_ncc]);
 
-    // Try MST match first (exact)
-    let matchedNcc = ocrMST
-      ? nccList.find(
-          (n) => n.ma_so_thue && normalize(n.ma_so_thue) === normalize(ocrMST)
-        )
-      : null;
-
-    // Fallback to fuzzy name match
-    if (!matchedNcc && ocrSupplierName) {
-      matchedNcc = findBestMatch(
-        ocrSupplierName,
-        nccList,
-        (n) => [n.ten_ncc, n.ma_ncc],
-        0.35
-      );
-    }
-
-    // 8. FUZZY MATCH items + FILTER empty rows
-    const rawItems = parsed.items || [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const validItems = rawItems.filter((item: any) => {
-      const name = (item.ten_hang_hoa || "").trim();
-      // Filter out items without a real product name
-      if (name.length < 2) return false;
-      return true;
-    });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const enrichedItems = validItems.map((item: any) => {
-      const ocrName = (item.ten_hang_hoa || "").trim();
-      const matchedHH = findBestMatch(
-        ocrName,
-        hhList,
+    // Match items — STRICT filter: must have ten >= 3 chars
+    const items = (raw.items || [])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter((i: any) => {
+        const name = (i.ten || "").trim();
+        return name.length >= 3;
+      })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((i: any) => {
+        const name = (i.ten || "").trim();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (h: any) => [h.ten, h.ma_hang_hoa],
-        0.35
-      );
+        const hh = bestMatch(name, hhList, (h: any) => [h.ten, h.ma_hang_hoa]);
+        return {
+          matched_hang_hoa_id: hh?.id || null,
+          matched_ten: hh?.ten || null,
+          matched_dvt: hh?.don_vi_tinh?.ten_dvt || null,
+          matched_gia: hh?.gia_binh_quan || null,
+          ocr_ten_hang_hoa: name,
+          don_vi_tinh: i.dvt || "",
+          so_luong: Math.max(0, Number(i.sl) || 0),
+          don_gia: Math.max(0, Number(i.gia) || 0),
+          vat_pct: Math.max(0, Number(i.vat) || 0),
+        };
+      });
 
-      return {
-        matched_hang_hoa_id: matchedHH?.id || null,
-        matched_ten: matchedHH?.ten || null,
-        matched_dvt: matchedHH?.don_vi_tinh?.ten_dvt || null,
-        ocr_ten_hang_hoa: ocrName,
-        don_vi_tinh: item.don_vi_tinh || "",
-        so_luong: Number(item.so_luong) || 0,
-        don_gia: Number(item.don_gia) || 0,
-        vat_pct: Number(item.vat_pct) || 0,
-      };
-    });
-
-    // 9. Build result
-    const result = {
+    return NextResponse.json({
       supplier: {
-        matched_id: matchedNcc?.id || null,
-        matched_ma_ncc: matchedNcc?.ma_ncc || null,
-        matched_ten_ncc: matchedNcc?.ten_ncc || null,
-        ocr_ten_ncc: ocrSupplierName,
-        ma_so_thue: ocrMST || null,
-        dia_chi: parsed.supplier?.dia_chi || null,
+        matched_id: ncc?.id || null,
+        matched_ma_ncc: ncc?.ma_ncc || null,
+        matched_ten_ncc: ncc?.ten_ncc || null,
+        ocr_ten_ncc: ocrNcc,
+        ma_so_thue: ocrMst || null,
       },
-      items: enrichedItems,
+      items,
       invoice_info: {
-        so_hoa_don: parsed.invoice_info?.so_hoa_don || null,
-        ngay_hoa_don: parsed.invoice_info?.ngay_hoa_don || null,
-        tong_tien: Number(parsed.invoice_info?.tong_tien) || null,
+        so_hoa_don: raw.so_hd || null,
+        ngay_hoa_don: raw.ngay || null,
       },
-      confidence: enrichedItems.length > 0 ? "medium" : "low",
-      notes: `Doc duoc ${enrichedItems.length} san pham. NCC: ${matchedNcc ? "Da khop" : "Chua khop"}.`,
-    };
-
-    return NextResponse.json(result);
+    });
   } catch (err) {
-    console.error("OCR Invoice error:", err);
-    const message =
-      err instanceof Error ? err.message : "Loi khong xac dinh";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("OCR error:", err);
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Loi" }, { status: 500 });
   }
 }
