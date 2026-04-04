@@ -36,15 +36,12 @@ export default function ProductAutocomplete({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchProducts = useCallback(async (query: string) => {
-    if (!query.trim()) {
-      setOptions([]);
-      return;
-    }
     setLoading(true);
     try {
-      const res = await fetch(
-        `/api/wms/hang-hoa?search=${encodeURIComponent(query)}&limit=10`
-      );
+      const params = query.trim()
+        ? `search=${encodeURIComponent(query)}&limit=50`
+        : `limit=50`;
+      const res = await fetch(`/api/wms/hang-hoa?${params}`);
       const data = await res.json();
       setOptions(data?.data || []);
     } catch {
@@ -56,14 +53,8 @@ export default function ProductAutocomplete({
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!value.trim()) {
-      setOptions([]);
-      setOpen(false);
-      return;
-    }
     debounceRef.current = setTimeout(() => {
       fetchProducts(value);
-      setOpen(true);
     }, 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -105,13 +96,14 @@ export default function ProductAutocomplete({
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => {
           if (options.length > 0) setOpen(true);
+          else fetchProducts(value).then(() => setOpen(true));
         }}
         placeholder={placeholder}
         className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900"
       />
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full min-w-[500px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+        <div className="absolute bottom-full z-50 mb-1 w-full min-w-[500px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
           {loading ? (
             <div className="px-3 py-2 text-sm text-gray-400">
               Đang tìm...

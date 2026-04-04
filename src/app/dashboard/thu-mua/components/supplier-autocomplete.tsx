@@ -30,15 +30,12 @@ export default function SupplierAutocomplete({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchSuppliers = useCallback(async (query: string) => {
-    if (!query.trim()) {
-      setOptions([]);
-      return;
-    }
     setLoading(true);
     try {
-      const res = await fetch(
-        `/api/wms/nha-cung-cap?search=${encodeURIComponent(query)}&limit=10`
-      );
+      const params = query.trim()
+        ? `search=${encodeURIComponent(query)}&limit=50`
+        : `limit=50`;
+      const res = await fetch(`/api/wms/nha-cung-cap?${params}`);
       const data = await res.json();
       setOptions(data?.data || []);
     } catch {
@@ -50,14 +47,8 @@ export default function SupplierAutocomplete({
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!value.trim()) {
-      setOptions([]);
-      setOpen(false);
-      return;
-    }
     debounceRef.current = setTimeout(() => {
       fetchSuppliers(value);
-      setOpen(true);
     }, 300);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -92,6 +83,7 @@ export default function SupplierAutocomplete({
           }}
           onFocus={() => {
             if (options.length > 0) setOpen(true);
+            else fetchSuppliers(value).then(() => setOpen(true));
           }}
           placeholder={placeholder}
           className={`w-full rounded border px-3 py-1.5 pr-8 text-sm transition-colors ${
@@ -119,7 +111,7 @@ export default function SupplierAutocomplete({
       </div>
 
       {open && (
-        <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+        <div className="absolute bottom-full z-50 mb-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
           {loading ? (
             <div className="px-3 py-2 text-sm text-gray-400">
               Đang tìm...
