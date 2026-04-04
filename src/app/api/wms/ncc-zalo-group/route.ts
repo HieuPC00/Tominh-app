@@ -40,7 +40,6 @@ export async function POST(request: NextRequest) {
       .insert({
         ncc_id: body.ncc_id,
         zalo_group_id: body.zalo_group_id.trim(),
-        ghi_chu: body.ghi_chu || null,
       })
       .select("*, nha_cung_cap(ma_ncc, ten_ncc)")
       .single();
