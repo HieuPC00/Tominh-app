@@ -973,7 +973,6 @@ function ZaloGroupSubTab() {
   const [nccList, setNccList] = useState<{ id: string; ma_ncc: string; ten_ncc: string }[]>([]);
   const [formNccId, setFormNccId] = useState("");
   const [formGroupId, setFormGroupId] = useState("");
-  const [formGhiChu, setFormGhiChu] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
@@ -1001,10 +1000,10 @@ function ZaloGroupSubTab() {
     try {
       const res = await fetch("/api/wms/ncc-zalo-group", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ncc_id: formNccId, zalo_group_id: formGroupId.trim(), ghi_chu: formGhiChu.trim() || null }),
+        body: JSON.stringify({ ncc_id: formNccId, zalo_group_id: formGroupId.trim() }),
       });
       if (!res.ok) { const err = await res.json(); setFormError(err.error || "Loi"); return; }
-      setFormNccId(""); setFormGroupId(""); setFormGhiChu(""); fetchMappings();
+      setFormNccId(""); setFormGroupId(""); fetchMappings();
     } catch { setFormError("Loi ket noi"); }
     finally { setSubmitting(false); }
   }
@@ -1019,7 +1018,7 @@ function ZaloGroupSubTab() {
     <div className="space-y-4">
       <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Mapping NCC ↔ Zalo Group</h3>
       <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500">NCC</label>
             <select value={formNccId} onChange={(e) => setFormNccId(e.target.value)}
@@ -1032,12 +1031,6 @@ function ZaloGroupSubTab() {
             <label className="mb-1 block text-xs font-medium text-gray-500">Zalo Group ID</label>
             <input type="text" value={formGroupId} onChange={(e) => setFormGroupId(e.target.value)}
               placeholder="VD: 2225045345975894137"
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-gray-500">Ghi chu</label>
-            <input type="text" value={formGhiChu} onChange={(e) => setFormGhiChu(e.target.value)}
-              placeholder="VD: Group mua hang"
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
           </div>
           <div className="flex items-end">
@@ -1063,7 +1056,6 @@ function ZaloGroupSubTab() {
                 <th className="px-4 py-2 text-left font-medium text-gray-500">Ma NCC</th>
                 <th className="px-4 py-2 text-left font-medium text-gray-500">Ten NCC</th>
                 <th className="px-4 py-2 text-left font-medium text-gray-500">Zalo Group ID</th>
-                <th className="px-4 py-2 text-left font-medium text-gray-500">Ghi chu</th>
                 <th className="px-4 py-2 text-center font-medium text-gray-500">Xoa</th>
               </tr>
             </thead>
@@ -1074,7 +1066,6 @@ function ZaloGroupSubTab() {
                   <td className="px-4 py-2 font-mono text-xs text-blue-600">{m.nha_cung_cap?.ma_ncc || "—"}</td>
                   <td className="px-4 py-2 text-gray-900 dark:text-gray-100">{m.nha_cung_cap?.ten_ncc || "—"}</td>
                   <td className="px-4 py-2 font-mono text-xs text-gray-600 dark:text-gray-400">{m.zalo_group_id}</td>
-                  <td className="px-4 py-2 text-gray-500">{m.ghi_chu || "—"}</td>
                   <td className="px-4 py-2 text-center">
                     <button onClick={() => handleDelete(m.id)} className="text-red-500 hover:text-red-700">Xoa</button>
                   </td>

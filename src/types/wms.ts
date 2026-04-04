@@ -232,7 +232,6 @@ export interface NccZaloGroup {
   id: string;
   ncc_id: string;
   zalo_group_id: string;
-  ghi_chu: string | null;
   created_at: string;
   nha_cung_cap?: { ma_ncc: string; ten_ncc: string };
 }
