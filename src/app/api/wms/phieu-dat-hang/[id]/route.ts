@@ -42,7 +42,7 @@ export async function GET(
     const { data, error } = await supabase
       .from("phieu_dat_hang")
       .select(
-        "*, nha_cung_cap(id, ma_ncc, ten_ncc), phieu_dat_hang_items(*)"
+        "*, nha_cung_cap(id, ma_ncc, ten_ncc, dien_thoai), phieu_dat_hang_items(*)"
       )
       .eq("id", id)
       .single();
@@ -261,7 +261,7 @@ export async function PATCH(
     const { data: result, error: fetchError } = await supabase
       .from("phieu_dat_hang")
       .select(
-        "*, nha_cung_cap(id, ma_ncc, ten_ncc), phieu_dat_hang_items(*)"
+        "*, nha_cung_cap(id, ma_ncc, ten_ncc, dien_thoai), phieu_dat_hang_items(*)"
       )
       .eq("id", id)
       .single();

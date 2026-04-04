@@ -136,6 +136,16 @@ export default function CongNoTab() {
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
 
+  // Zalo notification dialog
+  const [zaloDialog, setZaloDialog] = useState<{
+    maPhieu: string;
+    nccTen: string;
+    nccPhone: string;
+    items: { ten: string; dvt: string; sl: number; gia: number }[];
+    tongTien: number;
+    ngayDat: string;
+  } | null>(null);
+
   // OCR state
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrError, setOcrError] = useState("");
@@ -426,6 +436,33 @@ export default function CongNoTab() {
         const err = await res.json();
         alert(err.error || "Loi cap nhat trang thai");
         return;
+      }
+
+      // Show Zalo notification dialog when confirming PO
+      if (newStatus === "da_xac_nhan") {
+        const poRes = await fetch(`/api/wms/phieu-dat-hang/${orderId}`);
+        if (poRes.ok) {
+          const poData = await poRes.json();
+          const nccPhone = poData.nha_cung_cap?.dien_thoai;
+          if (nccPhone) {
+            setZaloDialog({
+              maPhieu: poData.ma_phieu || "",
+              nccTen: poData.nha_cung_cap?.ten_ncc || "",
+              nccPhone,
+              items: (poData.phieu_dat_hang_items || []).map(
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (it: any) => ({
+                  ten: it.ten_hang_hoa || "",
+                  dvt: it.don_vi_tinh || "",
+                  sl: Number(it.so_luong) || 0,
+                  gia: Number(it.don_gia) || 0,
+                })
+              ),
+              tongTien: Number(poData.tong_tien) || 0,
+              ngayDat: poData.ngay_dat || "",
+            });
+          }
+        }
       }
 
       fetchOrders();
@@ -1329,6 +1366,84 @@ export default function CongNoTab() {
           onClose={() => setSelectedOrder(null)}
           onSave={handleSaveDetail}
         />
+      )}
+
+      {/* Zalo Notification Dialog */}
+      {zaloDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-lg rounded-lg border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-700 dark:bg-gray-950">
+            <h3 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
+              Gui thong bao Zalo cho NCC
+            </h3>
+            <p className="mb-4 text-sm text-gray-500">
+              NCC: <span className="font-medium text-gray-700 dark:text-gray-300">{zaloDialog.nccTen}</span>
+              {" | SĐT: "}
+              <span className="font-medium text-blue-600">{zaloDialog.nccPhone}</span>
+            </p>
+
+            {/* Preview nội dung tin nhắn */}
+            <div className="mb-4 max-h-60 overflow-auto rounded-lg bg-gray-50 p-4 text-sm dark:bg-gray-900">
+              <pre className="whitespace-pre-wrap font-sans text-gray-800 dark:text-gray-200">
+{(() => {
+  const lines = [
+    `DON HANG: ${zaloDialog.maPhieu}`,
+    `Ngay: ${zaloDialog.ngayDat ? new Date(zaloDialog.ngayDat).toLocaleDateString("vi-VN") : ""}`,
+    "",
+  ];
+  zaloDialog.items.forEach((it, i) => {
+    const line = `${i + 1}. ${it.ten}${it.dvt ? ` - ${it.sl} ${it.dvt}` : ""}${it.gia > 0 ? ` - ${it.gia.toLocaleString("vi-VN")}d` : ""}`;
+    lines.push(line);
+  });
+  lines.push("");
+  if (zaloDialog.tongTien > 0) {
+    lines.push(`Tong: ${zaloDialog.tongTien.toLocaleString("vi-VN")}d`);
+    lines.push("");
+  }
+  lines.push("Vui long xac nhan va giao hang. Xin cam on!");
+  return lines.join("\n");
+})()}
+              </pre>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setZaloDialog(null)}
+                className="rounded border border-gray-300 px-4 py-2 text-sm dark:border-gray-600"
+              >
+                Bo qua
+              </button>
+              <button
+                onClick={() => {
+                  const lines = [
+                    `DON HANG: ${zaloDialog.maPhieu}`,
+                    `Ngay: ${zaloDialog.ngayDat ? new Date(zaloDialog.ngayDat).toLocaleDateString("vi-VN") : ""}`,
+                    "",
+                  ];
+                  zaloDialog.items.forEach((it, i) => {
+                    const line = `${i + 1}. ${it.ten}${it.dvt ? ` - ${it.sl} ${it.dvt}` : ""}${it.gia > 0 ? ` - ${it.gia.toLocaleString("vi-VN")}d` : ""}`;
+                    lines.push(line);
+                  });
+                  lines.push("");
+                  if (zaloDialog.tongTien > 0) {
+                    lines.push(`Tong: ${zaloDialog.tongTien.toLocaleString("vi-VN")}d`);
+                    lines.push("");
+                  }
+                  lines.push("Vui long xac nhan va giao hang. Xin cam on!");
+                  const text = lines.join("\n");
+
+                  navigator.clipboard.writeText(text).then(() => {
+                    const phone = zaloDialog.nccPhone.replace(/\D/g, "");
+                    window.open(`https://zalo.me/${phone}`, "_blank");
+                    setZaloDialog(null);
+                  });
+                }}
+                className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                Copy & Mo Zalo
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Kho Selection Dialog */}
