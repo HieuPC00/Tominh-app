@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import type { NhaCungCap, HangHoa } from "@/types/wms";
+import type { NhaCungCap, HangHoa, NccZaloGroup } from "@/types/wms";
 
 const subTabs = [
   { id: "nha-cung-cap", label: "Nha cung cap" },
   { id: "hang-hoa", label: "Hang hoa" },
+  { id: "zalo-group", label: "Zalo Group" },
 ];
 
 const NHIET_DO_LABEL: Record<string, string> = {
@@ -45,6 +46,7 @@ export default function DanhMucTab() {
 
       {activeSubTab === "nha-cung-cap" && <NhaCungCapSubTab />}
       {activeSubTab === "hang-hoa" && <HangHoaSubTab />}
+      {activeSubTab === "zalo-group" && <ZaloGroupSubTab />}
     </div>
   );
 }
@@ -957,6 +959,129 @@ function HangHoaSubTab() {
               &raquo;&raquo;
             </button>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===================== ZALO GROUP SUB-TAB =====================
+
+function ZaloGroupSubTab() {
+  const [mappings, setMappings] = useState<NccZaloGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [nccList, setNccList] = useState<{ id: string; ma_ncc: string; ten_ncc: string }[]>([]);
+  const [formNccId, setFormNccId] = useState("");
+  const [formGroupId, setFormGroupId] = useState("");
+  const [formGhiChu, setFormGhiChu] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const fetchMappings = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/wms/ncc-zalo-group?limit=200");
+      if (res.ok) { const data = await res.json(); setMappings(data?.data || []); }
+    } catch { setMappings([]); }
+    finally { setLoading(false); }
+  }, []);
+
+  const fetchNcc = useCallback(async () => {
+    try {
+      const res = await fetch("/api/wms/nha-cung-cap?limit=500&trang_thai=hoat_dong");
+      if (res.ok) { const data = await res.json(); setNccList(data?.data || []); }
+    } catch { setNccList([]); }
+  }, []);
+
+  useEffect(() => { fetchMappings(); fetchNcc(); }, [fetchMappings, fetchNcc]);
+
+  async function handleAdd() {
+    if (!formNccId || !formGroupId.trim()) { setFormError("Chon NCC va nhap Zalo Group ID"); return; }
+    setSubmitting(true); setFormError("");
+    try {
+      const res = await fetch("/api/wms/ncc-zalo-group", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ncc_id: formNccId, zalo_group_id: formGroupId.trim(), ghi_chu: formGhiChu.trim() || null }),
+      });
+      if (!res.ok) { const err = await res.json(); setFormError(err.error || "Loi"); return; }
+      setFormNccId(""); setFormGroupId(""); setFormGhiChu(""); fetchMappings();
+    } catch { setFormError("Loi ket noi"); }
+    finally { setSubmitting(false); }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm("Xoa mapping nay?")) return;
+    try { await fetch(`/api/wms/ncc-zalo-group?id=${id}`, { method: "DELETE" }); fetchMappings(); }
+    catch { alert("Loi xoa"); }
+  }
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Mapping NCC ↔ Zalo Group</h3>
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-500">NCC</label>
+            <select value={formNccId} onChange={(e) => setFormNccId(e.target.value)}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800">
+              <option value="">-- Chon NCC --</option>
+              {nccList.map((n) => <option key={n.id} value={n.id}>{n.ma_ncc} - {n.ten_ncc}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-500">Zalo Group ID</label>
+            <input type="text" value={formGroupId} onChange={(e) => setFormGroupId(e.target.value)}
+              placeholder="VD: 2225045345975894137"
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-500">Ghi chu</label>
+            <input type="text" value={formGhiChu} onChange={(e) => setFormGhiChu(e.target.value)}
+              placeholder="VD: Group mua hang"
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
+          </div>
+          <div className="flex items-end">
+            <button onClick={handleAdd} disabled={submitting}
+              className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+              {submitting ? "Dang luu..." : "Them"}
+            </button>
+          </div>
+        </div>
+        {formError && <p className="mt-2 text-sm text-red-500">{formError}</p>}
+      </div>
+
+      {loading ? (
+        <p className="py-8 text-center text-sm text-gray-400">Dang tai...</p>
+      ) : mappings.length === 0 ? (
+        <p className="py-8 text-center text-sm text-gray-400">Chua co mapping nao</p>
+      ) : (
+        <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-gray-800">
+              <tr>
+                <th className="px-4 py-2 text-left font-medium text-gray-500">STT</th>
+                <th className="px-4 py-2 text-left font-medium text-gray-500">Ma NCC</th>
+                <th className="px-4 py-2 text-left font-medium text-gray-500">Ten NCC</th>
+                <th className="px-4 py-2 text-left font-medium text-gray-500">Zalo Group ID</th>
+                <th className="px-4 py-2 text-left font-medium text-gray-500">Ghi chu</th>
+                <th className="px-4 py-2 text-center font-medium text-gray-500">Xoa</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mappings.map((m, i) => (
+                <tr key={m.id} className="border-t border-gray-100 dark:border-gray-800">
+                  <td className="px-4 py-2 text-gray-400">{i + 1}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-blue-600">{m.nha_cung_cap?.ma_ncc || "—"}</td>
+                  <td className="px-4 py-2 text-gray-900 dark:text-gray-100">{m.nha_cung_cap?.ten_ncc || "—"}</td>
+                  <td className="px-4 py-2 font-mono text-xs text-gray-600 dark:text-gray-400">{m.zalo_group_id}</td>
+                  <td className="px-4 py-2 text-gray-500">{m.ghi_chu || "—"}</td>
+                  <td className="px-4 py-2 text-center">
+                    <button onClick={() => handleDelete(m.id)} className="text-red-500 hover:text-red-700">Xoa</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

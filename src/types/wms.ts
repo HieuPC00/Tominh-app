@@ -228,6 +228,15 @@ export interface NhaCungCap {
   updated_at: string;
 }
 
+export interface NccZaloGroup {
+  id: string;
+  ncc_id: string;
+  zalo_group_id: string;
+  ghi_chu: string | null;
+  created_at: string;
+  nha_cung_cap?: { ma_ncc: string; ten_ncc: string };
+}
+
 export interface HuyHang {
   id: string;
   ma_phieu: string;
